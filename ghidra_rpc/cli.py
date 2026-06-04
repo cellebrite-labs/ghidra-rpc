@@ -42,15 +42,33 @@ from ghidra_rpc.client import DaemonError, DaemonNotRunning
 def _resolve_project(project: str | None) -> Path:
     """Resolve the project .gpr path from flag, env var, or error."""
     if project:
-        return Path(project).resolve()
+        gpr = Path(project).resolve()
+        _validate_project_path(gpr)
+        return gpr
     env = os.environ.get("GHIDRA_RPC_PROJECT")
     if env:
-        return Path(env).resolve()
+        gpr = Path(env).resolve()
+        _validate_project_path(gpr)
+        return gpr
     click.echo(
         "Error: No project specified. Use --project or set GHIDRA_RPC_PROJECT.",
         err=True,
     )
     sys.exit(1)
+
+
+def _validate_project_path(gpr: Path) -> None:
+    """Reject project paths Ghidra's ProjectLocator cannot open."""
+    hidden_parent = next((part for part in gpr.parent.parts if part.startswith(".") and part != "."), None)
+    if hidden_parent is not None or gpr.stem.startswith("."):
+        click.echo(
+            "Error: Ghidra project paths cannot contain hidden path elements "
+            f"(got {gpr}). Use a non-hidden directory such as "
+            "~/ghidra-projects/<name>.gpr, /tmp/ghidra-rpc/<name>.gpr, "
+            "or analysis-ghidra-rpc/<name>.gpr.",
+            err=True,
+        )
+        sys.exit(1)
 
 
 def _json_output(data: dict) -> None:
