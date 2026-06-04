@@ -163,10 +163,16 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
     gpr = _resolve_project(project)
     sock = session_mod.socket_path_for_project(gpr)
 
-    # Stop existing daemon if running
-    stop_daemon(sock)
-
+    # Load before stopping: a graceful stop removes the session file.
     session = session_mod.load(gpr)
+
+    # Stop existing daemon if running.
+    stop_daemon(
+        sock,
+        pid=session.pid if session else None,
+        project_gpr=session.project_gpr if session else gpr,
+    )
+
     if session is None:
         if headless:
             # No prior session — create one from scratch.
@@ -277,8 +283,13 @@ def stop(project: str | None):
 
     gpr = _resolve_project(project)
     sock = session_mod.socket_path_for_project(gpr)
+    session = session_mod.load(gpr)
 
-    if stop_daemon(sock):
+    if stop_daemon(
+        sock,
+        pid=session.pid if session else None,
+        project_gpr=session.project_gpr if session else gpr,
+    ):
         _json_output({"ok": True, "result": {"status": "stopped"}})
     else:
         _json_error("NotRunning", "Daemon is not running.")

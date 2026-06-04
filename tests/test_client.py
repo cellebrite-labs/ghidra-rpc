@@ -143,6 +143,7 @@ class TestSession:
             project_gpr=gpr,
             socket_path=Path("/tmp/test.sock"),
             ghidra_install_dir=Path("/opt/ghidra"),
+            pid=12345,
         )
         save(session)
 
@@ -155,6 +156,7 @@ class TestSession:
         assert loaded.mode == "headless"
         assert loaded.project_gpr == gpr.resolve()
         assert loaded.ghidra_install_dir == Path("/opt/ghidra")
+        assert loaded.pid == 12345
 
     def test_save_and_load_no_ghidra_dir(self, tmp_path):
         from ghidra_rpc.session import Session, save, load

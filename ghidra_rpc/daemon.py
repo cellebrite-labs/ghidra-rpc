@@ -53,6 +53,7 @@ def start_blocking(session: Session) -> None:
     from ghidra_rpc import session as session_mod
     from ghidra_rpc.server.main import run_server
 
+    session.pid = os.getpid()
     session_mod.save(session)
 
     if session.mode == "headless":
@@ -105,13 +106,15 @@ def start_background(session: Session, timeout: float = 60.0) -> None:
         "--project", str(session.project_gpr),
     ]
     with open(log_path, "a") as log_fh:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=log_fh,
             stderr=log_fh,
             start_new_session=True,
             env=env,
         )
+    session.pid = proc.pid
+    session_mod.save(session)
 
     # Wait for socket to appear and become responsive
     deadline = time.time() + timeout
@@ -126,18 +129,82 @@ def start_background(session: Session, timeout: float = 60.0) -> None:
     )
 
 
-def stop_daemon(socket_path: Path) -> bool:
+def _pid_command(pid: int) -> str:
+    try:
+        return subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def _pid_matches_daemon(pid: int, project_gpr: Path | None) -> bool:
+    command = _pid_command(pid)
+    if not command:
+        return False
+    if "ghidra_rpc.daemon" not in command and "ghidra-rpcd" not in command:
+        return False
+    if project_gpr is not None and str(project_gpr) not in command:
+        return False
+    return True
+
+
+def _wait_for_pid_exit(pid: int, project_gpr: Path | None, timeout: float) -> bool:
+    saw_daemon = _pid_matches_daemon(pid, project_gpr)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _pid_matches_daemon(pid, project_gpr):
+            return saw_daemon
+        time.sleep(0.25)
+
+    if _pid_matches_daemon(pid, project_gpr):
+        saw_daemon = True
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if not _pid_matches_daemon(pid, project_gpr):
+                return saw_daemon
+            time.sleep(0.25)
+
+    if _pid_matches_daemon(pid, project_gpr):
+        saw_daemon = True
+        os.kill(pid, signal.SIGKILL)
+    return saw_daemon
+
+
+def stop_daemon(
+    socket_path: Path,
+    *,
+    pid: int | None = None,
+    project_gpr: Path | None = None,
+    timeout: float = 10.0,
+) -> bool:
     """Send a stop command to a running daemon. Returns True if stopped."""
     from ghidra_rpc.client import send_request, DaemonNotRunning
 
+    stopped = False
     try:
         send_request(socket_path, "stop")
-        return True
+        stopped = True
     except DaemonNotRunning:
-        return False
+        stopped = False
     except Exception:
         # If the daemon closed the connection before responding, that's OK
-        return True
+        stopped = True
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not is_running(socket_path):
+            break
+        time.sleep(0.25)
+
+    stopped_pid = False
+    if pid is not None:
+        stopped_pid = _wait_for_pid_exit(pid, project_gpr, timeout)
+
+    return stopped or stopped_pid
 
 
 def main():

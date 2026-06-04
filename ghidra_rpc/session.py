@@ -17,6 +17,7 @@ class Session:
     project_gpr: Path
     socket_path: Path
     ghidra_install_dir: Path | None = None  # persisted so restarts don't lose GHIDRA_INSTALL_DIR
+    pid: int | None = None
 
     def __post_init__(self):
         self.project_gpr = Path(self.project_gpr)
@@ -60,6 +61,7 @@ def save(session: Session) -> None:
         "project_gpr": str(session.project_gpr.resolve()),
         "socket_path": str(session.socket_path),
         "ghidra_install_dir": str(session.ghidra_install_dir) if session.ghidra_install_dir else None,
+        "pid": session.pid,
     }
     path.write_text(json.dumps(data, indent=2))
 
@@ -84,6 +86,7 @@ def load(gpr: Path) -> Session | None:
             project_gpr=Path(data["project_gpr"]),
             socket_path=Path(data["socket_path"]),
             ghidra_install_dir=Path(ghidra_dir) if ghidra_dir else None,
+            pid=data.get("pid"),
         )
     except (json.JSONDecodeError, KeyError):
         return None
