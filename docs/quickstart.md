@@ -97,7 +97,8 @@ change, so your edits survive restarts.
 - **Auto-restart**: If the daemon crashes, commands will try to restart it automatically
   from the saved session. If that fails, you'll get a clear error message.
 - **Write verification**: All write operations (rename, set-comment, set-signature,
-  retype-variable) return a `verified` boolean confirming the change was committed.
+  retype-variable, rename-variable) return a `verified` boolean confirming the change
+  was committed.
 - **Auto-save**: Every write operation saves to the project database on disk
   automatically. Changes survive daemon restarts and are visible when you reopen the
   project in the Ghidra GUI.

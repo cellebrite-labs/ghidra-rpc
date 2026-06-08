@@ -89,8 +89,8 @@ ghidra-rpc/
 │                                  set_comment, batch_rename (many renames, one tx),
 │                                  batch_set_comment (many comments, one tx),
 │                                  set_function_signature, set_data_type,
-│                                  retype_variable (with --timeout), set_calling_convention,
-│                                  set_thunk, set_flow_override,
+│                                  retype_variable (with --timeout), rename_variable (with --timeout),
+│                                  set_calling_convention, set_thunk, set_flow_override,
 │                                  create_namespace, list_namespaces
 │                                  _resolve_data_type() — type-name → Ghidra DataType
 │                                  _resolve_namespace() — namespace path resolution

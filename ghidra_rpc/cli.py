@@ -651,6 +651,27 @@ def retype_variable(binary: str, func: str, variable: str, data_type: str,
     })
 
 
+@cli.command(name="rename-variable")
+@click.argument("binary")
+@click.argument("func")
+@click.argument("variable")
+@click.argument("new_name")
+@click.option("--timeout", "-t", type=int, default=60, show_default=True,
+              help="Decompiler timeout in seconds (rename triggers recompilation).")
+@click.option("--project", "-p", type=str, help="Path to .gpr project file")
+def rename_variable(binary: str, func: str, variable: str, new_name: str,
+                    timeout: int, project: str | None):
+    """Rename a local variable or parameter in the decompiler view.
+
+    VARIABLE is the decompiler variable name (e.g. local_13, param_1).
+    NEW_NAME is the new variable name.
+    """
+    _rpc_command(_resolve_project(project), "rename_variable", {
+        "binary": binary, "func": func, "variable": variable,
+        "new_name": new_name, "timeout": timeout,
+    })
+
+
 @cli.command(name="write-bytes")
 @click.argument("binary")
 @click.argument("address")

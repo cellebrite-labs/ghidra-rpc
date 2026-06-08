@@ -678,6 +678,97 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     }
 
 
+def _handle_rename_variable(ctx, args: dict) -> dict:
+    """Rename a local variable or parameter in the decompiler's high-level view.
+
+    Decompilation is performed on the calling thread to avoid blocking the Swing
+    EDT; only the database mutation is dispatched to the EDT in GUI mode.
+    """
+    binary        = args.get("binary", "")
+    func_name     = args.get("func", "")
+    variable_name = args.get("variable", "")
+    new_name      = args.get("new_name", "")
+    timeout       = int(args.get("timeout", 60))
+
+    if not func_name:
+        raise ValueError("Missing required argument: func")
+    if not variable_name:
+        raise ValueError("Missing required argument: variable")
+    if not new_name:
+        raise ValueError("Missing required argument: new_name")
+
+    pi = ctx.get_program(binary)
+    func     = _find_function(pi, func_name)
+
+    # ---- Step 1: decompile to get HighFunction (blocking; not on Swing EDT) --
+    from ghidra.util.task import TaskMonitor
+
+    with pi.decompiler_pool.acquire() as decompiler:
+        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+
+    err = result.getErrorMessage()
+    if err and str(err).strip():
+        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
+
+    high_func = result.getHighFunction()
+    if high_func is None:
+        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
+
+    # Find the symbol by name in the local symbol map
+    found_sym = None
+    all_names = []
+    for sym in high_func.getLocalSymbolMap().getSymbols():
+        sym_name = str(sym.getName())
+        all_names.append(sym_name)
+        if sym_name == variable_name:
+            found_sym = sym
+            break
+
+    if found_sym is None:
+        raise ValueError(
+            f"Variable '{variable_name}' not found in '{func.getName()}'. "
+            f"Available: {sorted(all_names)}"
+        )
+
+    # ---- Step 2: commit the type change (on Swing EDT in GUI mode) -----------
+    def do_update():
+        from ghidra.program.model.pcode import HighFunctionDBUtil
+        from ghidra.program.model.symbol import SourceType
+
+        with ghidra_transaction(
+            pi.program, f"ghidra-rpc: rename {variable_name} -> {new_name}"
+        ):
+            HighFunctionDBUtil.updateDBVariable(
+                found_sym, new_name, None, SourceType.USER_DEFINED
+            )
+
+    _maybe_swing(ctx, do_update)
+    pi.decompiler_pool.invalidate_all()
+    ctx.save_program(pi)
+
+    # Read back via a fresh decompilation to verify the change took effect.
+    verified = False
+    try:
+        with pi.decompiler_pool.acquire() as decompiler:
+            from ghidra.util.task import TaskMonitor as _TM
+            result2 = decompiler.decompileFunction(func, 30, _TM.DUMMY)
+        hf2 = result2.getHighFunction()
+        if hf2:
+            for sym2 in hf2.getLocalSymbolMap().getSymbols():
+                if str(sym2.getName()) == new_name:
+                    verified = True
+                    break
+    except Exception:
+        pass
+
+    return {
+        "function":  str(func.getName()),
+        "variable":  variable_name,
+        "new_name":  new_name,
+        "verified":  verified,
+    }
+
+
 def _handle_create_function(ctx, args: dict) -> dict:
     """Create a function at an address where Ghidra hasn't auto-detected one.
 
@@ -1443,6 +1534,7 @@ register_handler("set_comment",               _handle_set_comment)
 register_handler("set_function_signature",    _handle_set_function_signature)
 register_handler("set_data_type",             _handle_set_data_type)
 register_handler("retype_variable",           _handle_retype_variable)
+register_handler("rename_variable",           _handle_rename_variable)
 register_handler("set_calling_convention",    _handle_set_calling_convention)
 register_handler("set_thunk",                 _handle_set_thunk)
 register_handler("set_flow_override",         _handle_set_flow_override)

@@ -142,6 +142,7 @@ is ambiguous, the error message lists matches so you can use the address instead
 | `ghidra-rpc set-signature <binary> <target> <signature>` | Set function signature | `{address, old_signature, new_signature, verified}` |
 | `ghidra-rpc set-data-type <binary> <address> <type>` | Define data type in listing | `{address, data_type, length, value}` |
 | `ghidra-rpc retype-variable <binary> <func> <variable> <type> [--timeout SECS]` | Retype decompiler variable | `{function, variable, old_type, new_type, verified}` |
+| `ghidra-rpc rename-variable <binary> <func> <variable> <new_name> [--timeout SECS]` | Rename decompiler variable | `{function, variable, new_name, verified}` |
 | `ghidra-rpc set-calling-convention <binary> <target> <convention>` | Change a function's calling convention | `{address, name, old_convention, new_convention, verified}` |
 | `ghidra-rpc set-thunk <binary> <thunk> <target>` | Mark a function as a thunk (forwarding wrapper) | `{thunk_address, thunk_name, target_address, target_name, verified}` |
 | `ghidra-rpc set-flow-override <binary> <address> <override>` | Override instruction flow type (NONE/BRANCH/CALL/CALL_RETURN/RETURN) | `{address, override, old_override, verified}` |
@@ -234,7 +235,7 @@ Common errors:
 
 ## Write Operations & Persistence
 
-Write operations (rename, create-label, create-function, delete-function, set-comment, batch-rename, batch-set-comment, set-signature, set-data-type, retype-variable, set-calling-convention, set-thunk, set-flow-override, set-processor-context, create-struct, create-union, modify-struct, create-enum, modify-enum, set-equate, set-bookmark, clear-data-range, apply-data-type-range, write-bytes, assemble, tag-function, untag-function, create-namespace)
+Write operations (rename, create-label, create-function, delete-function, set-comment, batch-rename, batch-set-comment, set-signature, set-data-type, retype-variable, rename-variable, set-calling-convention, set-thunk, set-flow-override, set-processor-context, create-struct, create-union, modify-struct, create-enum, modify-enum, set-equate, set-bookmark, clear-data-range, apply-data-type-range, write-bytes, assemble, tag-function, untag-function, create-namespace)
 use Ghidra transactions internally. **Every write is automatically saved to the project
 database on disk** after the transaction commits, so changes survive daemon restarts and
 are visible when the project is reopened in the Ghidra GUI.
@@ -376,8 +377,8 @@ a fresh headless session instead of requiring a prior `start`.
 decompiler analysis paths and time out even with simple assembly. Use
 `decompile --timeout 300` (or higher) for stubborn functions. The default timeout
 is **120 s** (increased from 60 s to handle large firmware functions). The
-`retype-variable` command also accepts `--timeout` since it triggers an internal
-decompilation pass.
+`retype-variable` and `rename-variable` commands also accept `--timeout` since it
+triggers an internal decompilation pass.
 
 **`decompile` returns bad-instruction warnings — use `pcode --high` as fallback**:
 When `decompile` produces output like *"Bad instruction data"* or fails to decode
