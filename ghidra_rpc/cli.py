@@ -740,11 +740,14 @@ def assemble(binary: str, address: str, instructions: tuple,
 @click.argument("address")
 @click.option("--count", "-n", type=int, default=20, show_default=True,
               help="Number of instructions to list (max 1000)")
+@click.option("--verbose-list", "verbose_list", is_flag=True, default=False,
+              help="Include detailed instruction list array in output")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
-def disassemble(binary: str, address: str, count: int, project: str | None):
+def disassemble(binary: str, address: str, count: int, verbose_list: bool, project: str | None):
     """Disassemble instructions starting at ADDRESS."""
     _rpc_command(_resolve_project(project), "disassemble", {
         "binary": binary, "address": address, "count": count,
+        "verbose_list": verbose_list,
     })
 
 

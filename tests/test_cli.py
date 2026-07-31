@@ -113,3 +113,38 @@ class TestListBookmarksCategoryFilter:
         )
         assert result.exit_code == 0
         assert captured["args"]["category"] == "BLE-Protocol"
+
+
+class TestDisassembleVerboseList:
+    """--verbose-list flag parsing and forwarding test."""
+
+    def test_verbose_list_default_is_false(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_rpc_command(gpr, cmd, args, socket_timeout=None):
+            captured["args"] = args
+
+        import ghidra_rpc.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_rpc_command", fake_rpc_command)
+
+        result = CliRunner().invoke(
+            cli, ["disassemble", "bin", "0x1000", "--project", str(tmp_path / "test.gpr")]
+        )
+        assert result.exit_code == 0
+        assert captured["args"]["verbose_list"] is False
+
+    def test_verbose_list_flag_passed_as_true(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_rpc_command(gpr, cmd, args, socket_timeout=None):
+            captured["args"] = args
+
+        import ghidra_rpc.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_rpc_command", fake_rpc_command)
+
+        result = CliRunner().invoke(
+            cli, ["disassemble", "bin", "0x1000", "--verbose-list", "--project", str(tmp_path / "test.gpr")]
+        )
+        assert result.exit_code == 0
+        assert captured["args"]["verbose_list"] is True
+

@@ -74,7 +74,8 @@ ghidra-rpc/
 │           │                     memory_map (list all memory segments/sections)
 │           ├── cpp.py          — list_vtable (walk a vtable, resolve slots to
 │           │                     methods; builds on read_pointers + xrefs)
-│           ├── disassembly.py  — disassemble (warning field when address skipped),
+│           ├── disassembly.py  — disassemble (warning field when address skipped;
+│           │                     verbose_list flag for optional instructions array),
 │           │                     assemble (SLEIGH assembler: text → bytes)
 │           ├── cfg.py          — basic_blocks (CFG from BasicBlockModel),
 │           │                     pcode (raw listing P-code or high SSA P-code)

@@ -611,21 +611,34 @@ class TestDecompilerAndDisassembly:
             )
 
     def test_disassemble_at_main(self, daemon):
+        # Default: instructions array is hidden, listing string is present
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
                       "address": "0x" + daemon["main_addr"], "count": 10})["result"]
-        assert "instructions" in result
-        assert len(result["instructions"]) > 0
-        for insn in result["instructions"]:
+        assert "listing" in result
+        assert "instructions" not in result
+        assert result["count"] > 0
+
+        # With verbose_list=True: instructions array is included
+        result_verbose = rpc(daemon["sock"], "disassemble",
+                             {"binary": daemon["short_name"],
+                              "address": "0x" + daemon["main_addr"],
+                              "count": 10,
+                              "verbose_list": True})["result"]
+        assert "listing" in result_verbose
+        assert "instructions" in result_verbose
+        assert len(result_verbose["instructions"]) > 0
+        for insn in result_verbose["instructions"]:
             assert "address" in insn
             assert "mnemonic" in insn
 
     def test_disassemble_default_count(self, daemon):
-        """Default 20-instruction listing must return up to 20 instructions."""
+        """Default 20-instruction listing must return count up to 20."""
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
                       "address": "0x" + daemon["main_addr"]})["result"]
-        assert 0 < len(result["instructions"]) <= 20
+        assert 0 < result["count"] <= 20
+        assert "listing" in result
 
     def test_search_decompiled_finds_caller_by_callee_name(self, daemon):
         """stack_push() calls node_alloc(); searching for that callee name
@@ -1050,7 +1063,8 @@ class TestCommentsAndLabels:
         # Verify via disassemble (EOL comments appear next to instructions)
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
-                      "address": addr, "count": 1})["result"]
+                      "address": addr, "count": 1,
+                      "verbose_list": True})["result"]
         # At minimum the command must succeed; comment visibility depends on
         # the disassemble output format.
         assert "instructions" in result
