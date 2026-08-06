@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `disassemble` no longer returns the `instructions` array by
+  default — it was a verbatim duplicate of the `listing` string, which already
+  carries every field it did (address, bytes, mnemonic, operands, EOL comment;
+  only `length` is absent, and that is the byte count). Pass
+  `--with-instructions` when you need the machine-parseable array. The default
+  response is roughly a quarter the size, measured across `--count` 8 to 500.
+  `ghidra-rpc disassemble <binary> <address>` now returns
+  `{address, count, listing}`; add `--with-instructions` for the previous shape.
+
 ### Fixed
 
 - Headless mode: a write that aborted mid-transaction could silently discard

@@ -619,13 +619,14 @@ class TestDecompilerAndDisassembly:
         assert "instructions" not in result
         assert result["count"] > 0
 
-        # With verbose_list=True: instructions array is included
+        # With with_instructions=True: instructions array is included, and the
+        # listing is byte-identical to the default response.
         result_verbose = rpc(daemon["sock"], "disassemble",
                              {"binary": daemon["short_name"],
                               "address": "0x" + daemon["main_addr"],
                               "count": 10,
-                              "verbose_list": True})["result"]
-        assert "listing" in result_verbose
+                              "with_instructions": True})["result"]
+        assert result_verbose["listing"] == result["listing"]
         assert "instructions" in result_verbose
         assert len(result_verbose["instructions"]) > 0
         for insn in result_verbose["instructions"]:
@@ -1060,14 +1061,15 @@ class TestCommentsAndLabels:
             "comment": comment, "comment_type": "eol",
         })
 
-        # Verify via disassemble (EOL comments appear next to instructions)
+        # Verify via disassemble.  Assert against the default response shape:
+        # `listing` is what callers get without --with-instructions, so this
+        # also pins the claim that it carries EOL comments losslessly.
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
-                      "address": addr, "count": 1,
-                      "verbose_list": True})["result"]
-        # At minimum the command must succeed; comment visibility depends on
-        # the disassemble output format.
-        assert "instructions" in result
+                      "address": addr, "count": 1})["result"]
+        assert comment in result["listing"], (
+            f"EOL comment missing from listing: {result['listing']!r}"
+        )
 
         # Cleanup: clear the comment
         rpc(daemon["sock"], "set_comment", {

@@ -16,16 +16,18 @@ def _handle_disassemble(ctx, args: dict) -> dict:
     """Return an assembly listing for a range of instructions.
 
     Args (in ``args`` dict):
-        binary       -- program name / key
-        address      -- start address (hex, e.g. ``0x101159`` or ``101159``)
-        count        -- number of instructions to list (default 20, max 1000)
-        verbose_list -- if true, include detailed instructions list array in output (default false)
+        binary            -- program name / key
+        address           -- start address (hex, e.g. ``0x101159`` or ``101159``)
+        count             -- number of instructions to list (default 20, max 1000)
+        with_instructions -- if true, also return the structured per-instruction
+                             array (default false; ``listing`` alone carries the
+                             same information at roughly a quarter the size)
 
     Returns a dict with:
         address      -- canonical start address
         count        -- number of instructions returned
         listing      -- formatted human-readable assembly listing string
-        instructions -- (optional, only when verbose_list is true) list of dicts, one per instruction:
+        instructions -- (only when with_instructions is true) list of dicts, one per instruction:
                           address   -- instruction address
                           bytes     -- hex bytes (e.g. ``"4889e5"``)
                           mnemonic  -- opcode mnemonic (e.g. ``"MOV"``)
@@ -35,10 +37,10 @@ def _handle_disassemble(ctx, args: dict) -> dict:
     """
     from ghidra_rpc.server.context import _parse_address
 
-    binary       = args.get("binary", "")
-    address_str  = args.get("address", "")
-    count        = int(args.get("count", _DEFAULT_COUNT))
-    verbose_list = bool(args.get("verbose_list", False))
+    binary            = args.get("binary", "")
+    address_str       = args.get("address", "")
+    count             = int(args.get("count", _DEFAULT_COUNT))
+    with_instructions = bool(args.get("with_instructions", False))
 
     if not address_str:
         raise ValueError("Missing required argument: address")
@@ -135,7 +137,7 @@ def _handle_disassemble(ctx, args: dict) -> dict:
         "count":   len(instructions),
         "listing": _format_listing(instructions),
     }
-    if verbose_list:
+    if with_instructions:
         result["instructions"] = instructions
     if actual_start:
         result["warning"] = (
