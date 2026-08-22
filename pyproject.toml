@@ -1,7 +1,7 @@
 [project]
 name = "ghidra-rpc"
 version = "0.2.0"
-description = "CLI-driven daemon exposing Ghidra reverse engineering capabilities over a Unix domain socket"
+description = "CLI-driven daemon exposing Ghidra reverse engineering capabilities over a local transport"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

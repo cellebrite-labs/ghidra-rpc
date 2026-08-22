@@ -27,13 +27,23 @@ cron/systemd/nohup contexts that strip non-standard env vars.
 1. Saves the session file.
 2. Spawns `python -m ghidra_rpc.daemon --mode … --project …` with `start_new_session=True`
    so the child survives the parent's exit.
-3. Polls the socket (0.5 s interval) until it's responsive or the timeout expires.
+3. Polls the local endpoint (0.5 s interval) until it's responsive or the timeout expires.
 4. On timeout the error message includes the log file path.
 
-Log file: `/tmp/ghidra-rpc-<hash>.log` (same stem as the socket). On timeout:
+Log file: `/tmp/ghidra-rpc-<hash>.log` on Unix or
+`%TEMP%\ghidra-rpc-<hash>.log` on Windows (same stem as the endpoint). On Unix,
+inspect it with:
 ```
 tail -50 /tmp/ghidra-rpc-*.log
 ```
+
+## Local Transport
+
+Linux and macOS use the original Unix domain socket transport. Windows Python
+builds do not consistently provide `AF_UNIX`, so Windows uses a TCP listener bound
+only to `127.0.0.1`. Its temporary endpoint file contains the chosen port and a
+random authentication token; every client request must present that token. The
+wire format remains newline-delimited JSON on every platform.
 
 ## Analysis Control (`load --no-analyze`, `--analysis-timeout`)
 
@@ -129,9 +139,10 @@ function-level progress tracking and bookmarks for address-level findings.
 
 ### 15. `_discover_instances()` socket glob and test isolation
 `cli._discover_instances()` (backing `list-instances` and `stop --all`) merges the
-session registry with a raw glob over `cli._SOCKET_SCAN_DIR` (default `/tmp`) to catch
-sockets from daemons that predate the registry, or were started manually. Because
-sockets always live in `/tmp` (`session.socket_path_for_project` is not configurable),
+session registry with a raw glob over `cli._SOCKET_SCAN_DIR` (the platform temporary
+directory) to catch endpoints from daemons that predate the registry, or were started
+manually. Because endpoints always live in that directory
+(`session.socket_path_for_project` is not configurable),
 this glob is **not** covered by the `GHIDRA_RPC_STATE_DIR` env var that isolates the
 registry file in tests. Any test that exercises `list-instances`/`stop --all` (or calls
 `_discover_instances()` directly) must also monkeypatch `cli._SOCKET_SCAN_DIR` to a

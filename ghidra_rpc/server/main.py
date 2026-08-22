@@ -1,4 +1,4 @@
-"""Unix domain socket server for ghidra-rpc.
+"""Local transport server for ghidra-rpc.
 
 Accepts newline-delimited JSON requests and dispatches to tool handlers.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import signal
+import secrets
 import socket
 import sys
 import threading
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ghidra_rpc.session import Session
+from ghidra_rpc import transport
 
 logger = logging.getLogger("ghidra-rpc.server")
 
@@ -38,7 +39,13 @@ def register_handler(cmd: str, handler):
     _HANDLERS[cmd] = handler
 
 
-def _handle_connection(conn: socket.socket, ctx: Any, shutdown_event: threading.Event, session: Session):
+def _handle_connection(
+    conn: socket.socket,
+    ctx: Any,
+    shutdown_event: threading.Event,
+    session: Session,
+    auth_token: str | None,
+):
     """Handle a single client connection: read request, dispatch, send response."""
     try:
         buf = b""
@@ -67,6 +74,20 @@ def _handle_connection(conn: socket.socket, ctx: Any, shutdown_event: threading.
         req_id = request.get("id", str(uuid.uuid4()))
         cmd = request.get("cmd", "")
         args = request.get("args", {})
+
+        request_token = request.get("auth")
+        if auth_token is not None and (
+            not isinstance(request_token, str)
+            or not secrets.compare_digest(request_token, auth_token)
+        ):
+            response = {
+                "id": req_id,
+                "ok": False,
+                "error": "Unauthorized",
+                "message": "Invalid daemon authentication token",
+            }
+            conn.sendall((json.dumps(response) + "\n").encode())
+            return
 
         # Built-in commands
         if cmd == "ping":
@@ -116,7 +137,7 @@ def _handle_connection(conn: socket.socket, ctx: Any, shutdown_event: threading.
 
 
 def run_server(session: Session, ctx: Any) -> None:
-    """Run the RPC server on a Unix domain socket.
+    """Run the RPC server on the platform's local transport.
 
     Blocks until a 'stop' command is received or the process is interrupted.
     """
@@ -133,13 +154,7 @@ def run_server(session: Session, ctx: Any) -> None:
 
     sock_path = session.socket_path
 
-    # Clean up stale socket
-    if sock_path.exists():
-        sock_path.unlink()
-
-    server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server_sock.bind(str(sock_path))
-    server_sock.listen(5)
+    server_sock, auth_token = transport.listen(sock_path)
     server_sock.settimeout(1.0)  # Allow periodic checking of shutdown event
 
     shutdown_event = threading.Event()
@@ -158,12 +173,11 @@ def run_server(session: Session, ctx: Any) -> None:
             # Handle each connection in a thread so the server stays responsive
             t = threading.Thread(
                 target=_handle_connection,
-                args=(conn, ctx, shutdown_event, session),
+                args=(conn, ctx, shutdown_event, session, auth_token),
                 daemon=True,
             )
             t.start()
     finally:
         server_sock.close()
-        if sock_path.exists():
-            sock_path.unlink()
+        transport.remove_endpoint(sock_path)
         logger.info("Server shut down.")

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
+from ghidra_rpc.transport import endpoint_directory
 
 
 @dataclass
@@ -34,7 +41,7 @@ def socket_path_for_project(gpr: Path) -> Path:
     its own socket without collisions.
     """
     digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
-    return Path(f"/tmp/ghidra-rpc-{digest}.sock")
+    return endpoint_directory() / f"ghidra-rpc-{digest}.sock"
 
 
 def session_file_path(gpr: Path) -> Path:
@@ -63,7 +70,7 @@ def save(session: Session) -> None:
         "socket_path": str(session.socket_path),
         "ghidra_install_dir": str(session.ghidra_install_dir) if session.ghidra_install_dir else None,
     }
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def load(gpr: Path) -> Session | None:
@@ -72,7 +79,7 @@ def load(gpr: Path) -> Session | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         ghidra_dir = data.get("ghidra_install_dir")
         return Session(
             mode=data["mode"],
@@ -101,9 +108,33 @@ def remove(gpr: Path) -> None:
 #   3. $XDG_STATE_HOME/ghidra-rpc/sessions.json                (Linux, if set)
 #   4. ~/.local/state/ghidra-rpc/sessions.json                 (Linux default)
 #
-# All reads/writes are protected by an exclusive flock so concurrent daemon
-# starts don't corrupt the file.  Registry failures are non-fatal — callers
-# degrade gracefully to /tmp globbing.
+# All reads/writes are protected by an exclusive cross-platform file lock so
+# concurrent daemon starts don't corrupt the file. Registry failures are
+# non-fatal — callers degrade gracefully to endpoint-directory globbing.
+
+
+@contextmanager
+def _registry_lock(path: Path):
+    """Hold an exclusive lock associated with *path*."""
+    lock_path = path.with_name(f"{path.name}.lock")
+    with open(lock_path, "a+b") as lock_file:
+        if os.name == "nt":
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _registry_path() -> Path:
@@ -113,6 +144,13 @@ def _registry_path() -> Path:
         return Path(state_dir) / "sessions.json"
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support" / "ghidra-rpc"
+    elif sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        base = (
+            Path(local_app_data) / "ghidra-rpc"
+            if local_app_data
+            else Path.home() / "AppData" / "Local" / "ghidra-rpc"
+        )
     else:
         xdg = os.environ.get("XDG_STATE_HOME")
         base = Path(xdg) / "ghidra-rpc" if xdg else Path.home() / ".local" / "state" / "ghidra-rpc"
@@ -120,7 +158,7 @@ def _registry_path() -> Path:
 
 
 def register(session: Session) -> None:
-    """Upsert a session into the global registry (flock-protected, non-fatal)."""
+    """Upsert a session into the global registry (lock-protected, non-fatal)."""
     path = _registry_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(str(session.project_gpr.resolve()).encode()).hexdigest()[:8]
@@ -131,42 +169,42 @@ def register(session: Session) -> None:
         "ghidra_install_dir": str(session.ghidra_install_dir) if session.ghidra_install_dir else None,
     }
     try:
-        with open(path, "a+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            fh.seek(0)
-            content = fh.read()
-            try:
-                registry = json.loads(content) if content.strip() else {}
-            except json.JSONDecodeError:
-                registry = {}
-            registry[digest] = entry
-            fh.seek(0)
-            fh.truncate()
-            fh.write(json.dumps(registry, indent=2))
+        with _registry_lock(path):
+            with open(path, "a+", encoding="utf-8") as fh:
+                fh.seek(0)
+                content = fh.read()
+                try:
+                    registry = json.loads(content) if content.strip() else {}
+                except json.JSONDecodeError:
+                    registry = {}
+                registry[digest] = entry
+                fh.seek(0)
+                fh.truncate()
+                fh.write(json.dumps(registry, indent=2))
     except OSError:
-        pass  # Non-fatal: list-instances degrades to /tmp glob
+        pass  # Non-fatal: list-instances degrades to endpoint-directory globbing
 
 
 def unregister(gpr: Path) -> None:
-    """Remove a session from the global registry (flock-protected, non-fatal)."""
+    """Remove a session from the global registry (lock-protected, non-fatal)."""
     path = _registry_path()
     if not path.exists():
         return
     digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
     try:
-        with open(path, "r+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            content = fh.read()
-            try:
-                registry = json.loads(content) if content.strip() else {}
-            except json.JSONDecodeError:
-                return
-            if digest not in registry:
-                return
-            del registry[digest]
-            fh.seek(0)
-            fh.truncate()
-            fh.write(json.dumps(registry, indent=2))
+        with _registry_lock(path):
+            with open(path, "r+", encoding="utf-8") as fh:
+                content = fh.read()
+                try:
+                    registry = json.loads(content) if content.strip() else {}
+                except json.JSONDecodeError:
+                    return
+                if digest not in registry:
+                    return
+                del registry[digest]
+                fh.seek(0)
+                fh.truncate()
+                fh.write(json.dumps(registry, indent=2))
     except OSError:
         pass
 
@@ -177,8 +215,9 @@ def load_all() -> list["Session"]:
     if not path.exists():
         return []
     try:
-        content = path.read_text()
-        registry = json.loads(content) if content.strip() else {}
+        with _registry_lock(path):
+            content = path.read_text(encoding="utf-8")
+            registry = json.loads(content) if content.strip() else {}
     except (json.JSONDecodeError, OSError):
         return []
     sessions = []

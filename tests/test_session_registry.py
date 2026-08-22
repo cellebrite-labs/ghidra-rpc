@@ -82,19 +82,27 @@ class TestRegistryPath:
         assert _registry_path() == tmp_path / "state" / "sessions.json"
 
     def test_xdg_state_home_used_on_linux(self, tmp_path, monkeypatch):
-        if sys.platform == "darwin":
-            pytest.skip("XDG_STATE_HOME is not used on macOS")
+        if sys.platform != "linux":
+            pytest.skip("Linux-specific state directory")
         monkeypatch.delenv("GHIDRA_RPC_STATE_DIR", raising=False)
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
         assert _registry_path() == tmp_path / "ghidra-rpc" / "sessions.json"
 
     def test_linux_default_is_local_state(self, monkeypatch):
-        if sys.platform == "darwin":
+        if sys.platform != "linux":
             pytest.skip("Linux-specific default")
         monkeypatch.delenv("GHIDRA_RPC_STATE_DIR", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         path = _registry_path()
         assert path == Path.home() / ".local" / "state" / "ghidra-rpc" / "sessions.json"
+
+    def test_windows_default_uses_local_app_data(self, monkeypatch):
+        if sys.platform != "win32":
+            pytest.skip("Windows-specific default")
+        monkeypatch.delenv("GHIDRA_RPC_STATE_DIR", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(Path.home() / "custom-local-app-data"))
+        path = _registry_path()
+        assert path == Path.home() / "custom-local-app-data" / "ghidra-rpc" / "sessions.json"
 
     def test_macos_default_uses_library_application_support(self, monkeypatch):
         if sys.platform != "darwin":
@@ -179,6 +187,16 @@ class TestRegistry:
         monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(deep))
         register(_make_session(tmp_path))
         assert (deep / "sessions.json").exists()
+
+    def test_concurrent_registers_do_not_lose_entries(self, tmp_path):
+        sessions = [_make_session(tmp_path, f"concurrent-{index}") for index in range(8)]
+        threads = [threading.Thread(target=register, args=(session,)) for session in sessions]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+            assert not thread.is_alive()
+        assert len(load_all()) == len(sessions)
 
     # ── unregister ────────────────────────────────────────────────────────────
 
