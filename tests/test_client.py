@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import socket
 import threading
 import time
 import uuid
@@ -17,6 +16,7 @@ from ghidra_rpc.client import (
     _SOCKET_TIMEOUT_BUFFER,
     _derive_socket_timeout,
 )
+from ghidra_rpc import transport
 
 
 class TestClient:
@@ -27,15 +27,13 @@ class TestClient:
         self.sock_path = tmp_path / "echo.sock"
 
         def echo_server():
-            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            srv.bind(str(self.sock_path))
-            srv.listen(5)
+            srv, _ = transport.listen(self.sock_path)
             srv.settimeout(5)
             try:
                 while True:
                     try:
                         conn, _ = srv.accept()
-                    except socket.timeout:
+                    except TimeoutError:
                         continue
                     buf = b""
                     while b"\n" not in buf:
@@ -52,6 +50,7 @@ class TestClient:
                 pass
             finally:
                 srv.close()
+                transport.remove_endpoint(self.sock_path)
 
         self.server_thread = threading.Thread(target=echo_server, daemon=True)
         self.server_thread.start()
@@ -131,7 +130,8 @@ class TestSession:
         a = socket_path_for_project(p)
         b = socket_path_for_project(p)
         assert a == b
-        assert str(a).startswith("/tmp/ghidra-rpc-")
+        assert a.parent == transport.endpoint_directory()
+        assert a.name.startswith("ghidra-rpc-")
         assert str(a).endswith(".sock")
 
     def test_save_and_load(self, tmp_path):

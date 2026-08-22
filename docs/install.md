@@ -16,6 +16,12 @@ Point this at your Ghidra installation directory (the one containing `ghidraRun`
 export GHIDRA_INSTALL_DIR=/opt/ghidra_11.3
 ```
 
+On Windows PowerShell, point it at the directory containing `ghidraRun.bat`:
+
+```powershell
+$env:GHIDRA_INSTALL_DIR = 'C:\Tools\ghidra_11.3'
+```
+
 The daemon will refuse to start without this.
 
 ## Install ghidra-rpc
@@ -27,6 +33,8 @@ uv tool install /path/to/ghidra-rpc
 # Or for development
 uv pip install -e /path/to/ghidra-rpc
 ```
+
+The same `uv tool install` command works on Windows with a Windows path.
 
 ## Verify Installation
 

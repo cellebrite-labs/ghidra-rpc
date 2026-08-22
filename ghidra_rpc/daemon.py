@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -14,32 +13,13 @@ from ghidra_rpc.session import Session
 
 def is_running(socket_path: Path) -> bool:
     """Check if a daemon is responsive at the given socket path."""
-    import socket as sock_mod
-
     if not socket_path.exists():
         return False
 
     try:
-        s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(str(socket_path))
-        # Send a ping
-        import json
-        import uuid
+        from ghidra_rpc.client import send_request
 
-        request = {"id": str(uuid.uuid4()), "cmd": "ping", "args": {}}
-        s.sendall((json.dumps(request) + "\n").encode())
-        data = b""
-        while b"\n" not in data:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-        s.close()
-        if data.strip():
-            resp = json.loads(data.decode().strip())
-            return resp.get("ok", False)
-        return False
+        return send_request(socket_path, "ping", {}, socket_timeout=5).get("ok", False)
     except Exception:
         return False
 

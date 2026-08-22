@@ -38,12 +38,12 @@ HEX_INT = HexInt()
 from ghidra_rpc import session as session_mod
 from ghidra_rpc.client import DaemonError, DaemonNotRunning
 
-# Directory scanned by _discover_instances() for orphaned sockets not in the
-# registry. Sockets always live in /tmp (see session.socket_path_for_project),
+# Directory scanned by _discover_instances() for orphaned endpoint files not in
+# the registry. Endpoints live in the platform temporary directory,
 # so this is a plain module attribute purely so tests can monkeypatch it to a
 # tmp_path -- without that, a test-invoked `stop --all` would glob-match and
 # stop *real* daemons running on the developer's machine.
-_SOCKET_SCAN_DIR = Path("/tmp")
+_SOCKET_SCAN_DIR = session_mod.endpoint_directory()
 
 
 def _resolve_project(project: str | None) -> Path:
@@ -284,9 +284,9 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
         start_background(session, timeout=effective_timeout)
         _json_output({"ok": True, "result": {"status": "restarted", "socket": str(sock)}})
     except TimeoutError as e:
-        # For GUI mode the socket is created once the server starts listening, but
+        # For GUI mode the endpoint is created once the server starts listening, but
         # Ghidra's own startup (project load, analysis catch-up) can push responsiveness
-        # beyond even a generous timeout.  If the socket file already exists the server
+        # beyond even a generous timeout. If the endpoint file already exists the server
         # IS up; treat as a non-fatal warning so callers aren't misled.
         if session.mode == "gui" and sock.exists():
             _json_output({
@@ -396,8 +396,8 @@ def list_instances(include_dead: bool):
     """List all known ghidra-rpc daemon instances.
 
     Discovers instances from the global session registry and from any
-    /tmp/ghidra-rpc-*.sock files not already in the registry.  Each entry
-    is probed for liveness; stale registry entries (socket file gone) are
+    endpoint files in the platform temporary directory that are not already in
+    the registry. Each entry is probed for liveness; stale registry entries are
     pruned automatically.
 
     Use the reported project path with --project (or GHIDRA_RPC_PROJECT) to

@@ -274,14 +274,15 @@ class TestConnectivity:
         assert "project_gpr" in result
 
     def test_unknown_command_returns_error(self, daemon):
-        from ghidra_rpc.client import DaemonError, send_request
-        resp = send_request.__wrapped__ if hasattr(send_request, "__wrapped__") else None
+        from ghidra_rpc import transport
+
         # Call raw without going through our helper to check the error response
-        import json, socket as _socket, uuid
+        import json
+        import uuid
         request = {"id": str(uuid.uuid4()), "cmd": "_nonexistent_cmd_", "args": {}}
-        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        s.settimeout(10)
-        s.connect(str(daemon["sock"]))
+        s, auth_token = transport.connect(daemon["sock"], 10)
+        if auth_token is not None:
+            request["auth"] = auth_token
         s.sendall((json.dumps(request) + "\n").encode())
         buf = b""
         while b"\n" not in buf:

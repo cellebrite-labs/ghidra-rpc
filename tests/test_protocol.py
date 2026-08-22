@@ -1,11 +1,8 @@
-"""Tests for the Unix socket protocol and server dispatch."""
+"""Tests for the local transport protocol and server dispatch."""
 
 from __future__ import annotations
 
 import json
-import os
-import socket
-import tempfile
 import threading
 import time
 import uuid
@@ -13,6 +10,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+from ghidra_rpc import transport
 
 
 # We need to test the server without Ghidra, so mock the tool registration
@@ -31,10 +30,10 @@ def _send_request(sock_path: Path, cmd: str, args: dict | None = None) -> dict:
         "cmd": cmd,
         "args": args or {},
     }
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5)
+    s, auth_token = transport.connect(sock_path, 5)
+    if auth_token is not None:
+        request["auth"] = auth_token
     try:
-        s.connect(str(sock_path))
         s.sendall((json.dumps(request) + "\n").encode())
         buf = b""
         while b"\n" not in buf:
@@ -133,6 +132,18 @@ class TestProtocol:
         assert resp["ok"] is False
         assert resp["error"] == "UnknownCommand"
 
+    def test_windows_transport_rejects_missing_authentication(self):
+        s, auth_token = transport.connect(self.sock_path, 5)
+        if auth_token is None:
+            s.close()
+            pytest.skip("Authentication is only used by the Windows TCP transport")
+        request = {"id": "unauthorized", "cmd": "ping", "args": {}}
+        s.sendall((json.dumps(request) + "\n").encode())
+        response = json.loads(s.recv(65536).decode().strip())
+        s.close()
+        assert response["ok"] is False
+        assert response["error"] == "Unauthorized"
+
     def test_stop(self):
         resp = _send_request(self.sock_path, "stop")
         assert resp["ok"] is True
@@ -145,9 +156,7 @@ class TestProtocol:
         assert not self.sock_path.exists()
 
     def test_invalid_json(self):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(str(self.sock_path))
+        s, _ = transport.connect(self.sock_path, 5)
         s.sendall(b"not valid json\n")
         buf = b""
         while b"\n" not in buf:
@@ -163,9 +172,9 @@ class TestProtocol:
     def test_request_id_echoed(self):
         req_id = "test-id-12345"
         request = {"id": req_id, "cmd": "ping", "args": {}}
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(str(self.sock_path))
+        s, auth_token = transport.connect(self.sock_path, 5)
+        if auth_token is not None:
+            request["auth"] = auth_token
         s.sendall((json.dumps(request) + "\n").encode())
         buf = b""
         while b"\n" not in buf:

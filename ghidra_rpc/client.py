@@ -1,13 +1,13 @@
-"""Client for communicating with the ghidra-rpc daemon over Unix socket."""
+"""Client for communicating with the ghidra-rpc daemon over a local transport."""
 
 from __future__ import annotations
 
 import json
-import socket
 import uuid
 from pathlib import Path
 
 from ghidra_rpc import session as session_mod
+from ghidra_rpc import transport
 
 
 class DaemonNotRunning(Exception):
@@ -70,7 +70,7 @@ def send_request(
 ) -> dict:
     """Send a JSON-RPC-style request to the daemon and return the parsed response.
 
-    Connects to the Unix domain socket, sends a newline-delimited JSON request,
+    Connects to the local daemon endpoint, sends a newline-delimited JSON request,
     reads the response, and returns the parsed dict.
 
     ``socket_timeout`` controls how long the client waits for the server to
@@ -92,19 +92,19 @@ def send_request(
         else _derive_socket_timeout(args)
     )
 
+    try:
+        sock, auth_token = transport.connect(socket_path, effective_timeout)
+    except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
+        raise DaemonNotRunning(f"Cannot connect to daemon at {socket_path}: {e}")
+
     request = {
         "id": str(uuid.uuid4()),
         "cmd": cmd,
         "args": args or {},
     }
+    if auth_token is not None:
+        request["auth"] = auth_token
     request_bytes = (json.dumps(request) + "\n").encode("utf-8")
-
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(effective_timeout)
-        sock.connect(str(socket_path))
-    except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
-        raise DaemonNotRunning(f"Cannot connect to daemon at {socket_path}: {e}")
 
     try:
         sock.sendall(request_bytes)
