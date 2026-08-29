@@ -37,6 +37,7 @@ class HexInt(click.ParamType):
 HEX_INT = HexInt()
 from ghidra_rpc import session as session_mod
 from ghidra_rpc.client import DaemonError, DaemonNotRunning
+from ghidra_rpc import transport
 
 # Directory scanned by _discover_instances() for orphaned sockets not in the
 # registry. Sockets always live in /tmp (see session.socket_path_for_project),
@@ -117,7 +118,7 @@ def _discover_instances(include_dead: bool = False) -> list[dict]:
 
         if not alive:
             # Socket file gone entirely: stale registry entry, prune it.
-            if not sock.exists() and sess:
+            if not transport.endpoint_exists(str(sock)) and sess:
                 stale.append(sess.project_gpr)
             if not include_dead:
                 continue
@@ -198,7 +199,7 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
             start_background(session, timeout=effective_timeout)
             _json_output({"ok": True, "result": {"status": "started", "mode": mode, "socket": str(sock)}})
         except TimeoutError as e:
-            if mode == "gui" and sock.exists():
+            if mode == "gui" and transport.endpoint_exists(str(sock)):
                 _json_output({
                     "ok": True,
                     "result": {
@@ -288,7 +289,7 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
         # Ghidra's own startup (project load, analysis catch-up) can push responsiveness
         # beyond even a generous timeout.  If the socket file already exists the server
         # IS up; treat as a non-fatal warning so callers aren't misled.
-        if session.mode == "gui" and sock.exists():
+        if session.mode == "gui" and transport.endpoint_exists(str(sock)):
             _json_output({
                 "ok": True,
                 "result": {

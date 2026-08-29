@@ -10,19 +10,16 @@ import time
 from pathlib import Path
 
 from ghidra_rpc.session import Session
+from ghidra_rpc import transport
 
 
-def is_running(socket_path: Path) -> bool:
-    """Check if a daemon is responsive at the given socket path."""
-    import socket as sock_mod
-
-    if not socket_path.exists():
+def is_running(socket_path) -> bool:
+    """Check if a daemon is responsive at the given transport endpoint."""
+    if not transport.endpoint_exists(socket_path):
         return False
 
     try:
-        s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(str(socket_path))
+        s = transport.create_client_socket(str(socket_path), 5)
         # Send a ping
         import json
         import uuid
@@ -85,9 +82,8 @@ def start_background(session: Session, timeout: float = 60.0) -> None:
     session_mod.save(session)
     session_mod.register(session)
 
-    # Log file alongside the socket, named by session hash
-    socket_stem = session.socket_path.stem  # e.g. ghidra-rpc-9990be1c
-    log_path = session.socket_path.parent / f"{socket_stem}.log"
+    # Log file alongside the daemon, named by session hash
+    log_path = transport.log_path_for_project(session.project_gpr)
 
     # Build subprocess environment, explicitly forwarding GHIDRA_INSTALL_DIR so
     # the daemon subprocess works even when launched from environments that strip
@@ -107,13 +103,20 @@ def start_background(session: Session, timeout: float = 60.0) -> None:
         "--mode", session.mode,
         "--project", str(session.project_gpr),
     ]
+    # start_new_session (setsid) is POSIX-only; on Windows use a new process
+    # group instead so the daemon detaches from the console cleanly.
+    popen_kwargs: dict = {"env": env}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
     with open(log_path, "a") as log_fh:
         proc = subprocess.Popen(
             cmd,
             stdout=log_fh,
             stderr=log_fh,
-            start_new_session=True,
-            env=env,
+            **popen_kwargs,
         )
 
     # Wait for socket to appear and become responsive.

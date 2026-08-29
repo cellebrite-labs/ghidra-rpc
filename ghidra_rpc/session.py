@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: no fcntl -> registry locking degrades to unlocked best-effort
+    fcntl = None
+
 import hashlib
 import json
 import os
@@ -11,30 +15,38 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
+def _exclusive_lock(handle) -> None:
+    """Best-effort exclusive file lock; no-op where fcntl is unavailable."""
+    if fcntl is not None:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+
+
 @dataclass
 class Session:
     """Stores daemon session state so it can be reconstructed after restart."""
 
     mode: str  # "gui" or "headless"
     project_gpr: Path
-    socket_path: Path
+    socket_path: str
     ghidra_install_dir: Path | None = None  # persisted so restarts don't lose GHIDRA_INSTALL_DIR
 
     def __post_init__(self):
         self.project_gpr = Path(self.project_gpr)
-        self.socket_path = Path(self.socket_path)
+        self.socket_path = str(self.socket_path)
         if self.ghidra_install_dir is not None:
             self.ghidra_install_dir = Path(self.ghidra_install_dir)
 
 
-def socket_path_for_project(gpr: Path) -> Path:
-    """Derive a deterministic socket path from a .gpr project path.
+def socket_path_for_project(gpr: Path) -> str:
+    """Derive a deterministic transport endpoint from a .gpr project path.
 
-    Uses an 8-character hash of the absolute path so each project gets
-    its own socket without collisions.
+    Uses an 8-character hash of the absolute path so each project gets a
+    stable endpoint (a Unix socket file on POSIX, ``tcp:127.0.0.1:<port>``
+    on Windows) without collisions.
     """
-    digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
-    return Path(f"/tmp/ghidra-rpc-{digest}.sock")
+    from ghidra_rpc import transport
+
+    return transport.socket_path_for_project(gpr)
 
 
 def session_file_path(gpr: Path) -> Path:
@@ -77,7 +89,7 @@ def load(gpr: Path) -> Session | None:
         return Session(
             mode=data["mode"],
             project_gpr=Path(data["project_gpr"]),
-            socket_path=Path(data["socket_path"]),
+            socket_path=str(data["socket_path"]),
             ghidra_install_dir=Path(ghidra_dir) if ghidra_dir else None,
         )
     except (json.JSONDecodeError, KeyError):
@@ -132,7 +144,7 @@ def register(session: Session) -> None:
     }
     try:
         with open(path, "a+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            _exclusive_lock(fh)
             fh.seek(0)
             content = fh.read()
             try:
@@ -155,7 +167,7 @@ def unregister(gpr: Path) -> None:
     digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
     try:
         with open(path, "r+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            _exclusive_lock(fh)
             content = fh.read()
             try:
                 registry = json.loads(content) if content.strip() else {}

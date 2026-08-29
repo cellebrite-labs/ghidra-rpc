@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ghidra_rpc.session import Session
+from ghidra_rpc import transport
 
 logger = logging.getLogger("ghidra-rpc.server")
 
@@ -133,13 +134,11 @@ def run_server(session: Session, ctx: Any) -> None:
 
     sock_path = session.socket_path
 
-    # Clean up stale socket
-    if sock_path.exists():
-        sock_path.unlink()
+    # Clean up any stale endpoint (Unix socket file is removed here; on Windows
+    # a TCP endpoint has no artifact to remove).
+    transport.remove_endpoint(sock_path)
 
-    server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server_sock.bind(str(sock_path))
-    server_sock.listen(5)
+    server_sock = transport.create_server_socket(sock_path)
     server_sock.settimeout(1.0)  # Allow periodic checking of shutdown event
 
     shutdown_event = threading.Event()
@@ -164,6 +163,5 @@ def run_server(session: Session, ctx: Any) -> None:
             t.start()
     finally:
         server_sock.close()
-        if sock_path.exists():
-            sock_path.unlink()
+        transport.remove_endpoint(sock_path)
         logger.info("Server shut down.")

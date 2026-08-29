@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from ghidra_rpc import session as session_mod
+from ghidra_rpc import transport
 
 
 class DaemonNotRunning(Exception):
@@ -62,7 +63,7 @@ def _derive_socket_timeout(args: dict | None) -> float:
 
 
 def send_request(
-    socket_path: Path,
+    socket_path,
     cmd: str,
     args: dict | None = None,
     *,
@@ -84,7 +85,7 @@ def send_request(
     Raises ``DaemonNotRunning`` if the socket is missing or the connection is
     refused, and ``DaemonError`` if the daemon returns ``ok: false``.
     """
-    if not socket_path.exists():
+    if not transport.endpoint_exists(socket_path):
         raise DaemonNotRunning(f"Socket not found: {socket_path}")
 
     effective_timeout = (
@@ -100,9 +101,7 @@ def send_request(
     request_bytes = (json.dumps(request) + "\n").encode("utf-8")
 
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(effective_timeout)
-        sock.connect(str(socket_path))
+        sock = transport.create_client_socket(str(socket_path), effective_timeout)
     except (ConnectionRefusedError, FileNotFoundError, OSError) as e:
         raise DaemonNotRunning(f"Cannot connect to daemon at {socket_path}: {e}")
 

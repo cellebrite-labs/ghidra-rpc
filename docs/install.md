@@ -48,3 +48,30 @@ Installed automatically:
 - `pyghidra` — Python bindings for Ghidra
 - `click` — CLI framework
 - `jpype1` — Java/Python bridge (used by pyghidra)
+
+## Windows support
+
+ghidra-rpc is Unix-first, but the daemon can run on Windows thanks to the
+cross-platform transport module (`ghidra_rpc/transport.py`).
+
+- **IPC transport**: on Windows CPython does not reliably expose `AF_UNIX` /
+  `AF_PIPE`, so the daemon listens on a **TCP loopback** endpoint
+  (`tcp:127.0.0.1:<port>`) instead of a Unix socket file. The port is derived
+  deterministically from the project-path hash (`40000..59999`), so client and
+  daemon agree across restarts. On POSIX nothing changes (still a Unix socket).
+- **Env var**: set `GHIDRA_INSTALL_DIR` with Windows syntax, e.g. in cmd
+  `set GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.3_PUBLIC`, or persist via
+  `setx GHIDRA_INSTALL_DIR "C:\tools\ghidra_12.1.3_PUBLIC"`.
+- **Daemon detach**: `start_new_session` (POSIX `setsid`) is replaced by
+  `CREATE_NEW_PROCESS_GROUP` on Windows.
+- **Registry locking**: the global session registry uses `fcntl` (POSIX-only);
+  on Windows the lock degrades to a best-effort no-op. A stale-registry prune
+  still works.
+
+Caveats:
+- The deterministic TCP port has a low collision probability; if it is already
+  in use the daemon's `bind` fails (rare).
+- The `/tmp` socket scan path in `cli.py` is POSIX-only; `list-instances` still
+  works on Windows because the session registry is the source of truth.
+- Windows prerequisites are the same as POSIX: Ghidra 11+, Python 3.11+,
+  Java 17+, uv.
