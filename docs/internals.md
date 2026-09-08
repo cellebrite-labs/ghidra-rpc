@@ -25,14 +25,16 @@ cron/systemd/nohup contexts that strip non-standard env vars.
 
 `start_background()` in `daemon.py`:
 1. Saves the session file.
-2. Spawns `python -m ghidra_rpc.daemon --mode … --project …` with `start_new_session=True`
-   so the child survives the parent's exit.
+2. Spawns `python -m ghidra_rpc.daemon --mode … --project …` detached so the child
+   survives the parent's exit — `start_new_session=True` (setsid) on POSIX,
+   `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on Windows, where
+   `start_new_session` is silently ignored.
 3. Polls the local endpoint (0.5 s interval) until it's responsive or the timeout expires.
 4. On timeout the error message includes the log file path.
 
 Log file: `/tmp/ghidra-rpc-<hash>.log` on Unix or
-`%TEMP%\ghidra-rpc-<hash>.log` on Windows (same stem as the endpoint). On Unix,
-inspect it with:
+`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.log` on Windows (same stem as the
+endpoint). On Unix, inspect it with:
 ```
 tail -50 /tmp/ghidra-rpc-*.log
 ```

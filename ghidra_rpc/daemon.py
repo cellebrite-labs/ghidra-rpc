@@ -87,13 +87,27 @@ def start_background(session: Session, timeout: float = 60.0) -> None:
         "--mode", session.mode,
         "--project", str(session.project_gpr),
     ]
+    # Detach the child so it survives the parent's exit.  start_new_session
+    # (setsid) is POSIX-only — CPython silently ignores it on Windows, which
+    # left the daemon sharing the launching console and dying with it.  The
+    # Windows equivalent is DETACHED_PROCESS (drop the console entirely) plus
+    # CREATE_NEW_PROCESS_GROUP (so a Ctrl+C in the parent isn't broadcast to
+    # it).  stdout/stderr still redirect to the log file either way.
+    detach_kwargs: dict = {}
+    if sys.platform == "win32":
+        detach_kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        detach_kwargs["start_new_session"] = True
+
     with open(log_path, "a") as log_fh:
         proc = subprocess.Popen(
             cmd,
             stdout=log_fh,
             stderr=log_fh,
-            start_new_session=True,
             env=env,
+            **detach_kwargs,
         )
 
     # Wait for socket to appear and become responsive.
