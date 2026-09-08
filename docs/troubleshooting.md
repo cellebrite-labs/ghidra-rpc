@@ -41,7 +41,11 @@ loss), the socket file may remain.
 On Windows the equivalent file is the endpoint descriptor recording the daemon's
 loopback port and auth token, at
 `%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-XXXXXXXX.sock`. `status` prints its path the
-same way; delete it with `del` instead of `rm`.
+same way; delete it with `del` instead of `rm`. Unlike `/tmp`, that directory is not
+cleared on reboot, so a descriptor left behind by a killed daemon persists — but you
+normally do not need to remove it by hand: the next command finds the recorded port
+dead and restarts the daemon, which rewrites the descriptor with a fresh port and
+token.
 
 ## macOS Framework Python Issue
 
