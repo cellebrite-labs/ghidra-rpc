@@ -15,7 +15,7 @@ if os.name == "nt":
 else:
     import fcntl
 
-from ghidra_rpc.transport import endpoint_directory
+from ghidra_rpc.transport import endpoint_directory, windows_state_dir
 
 
 @dataclass
@@ -145,12 +145,7 @@ def _registry_path() -> Path:
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support" / "ghidra-rpc"
     elif sys.platform == "win32":
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        base = (
-            Path(local_app_data) / "ghidra-rpc"
-            if local_app_data
-            else Path.home() / "AppData" / "Local" / "ghidra-rpc"
-        )
+        base = windows_state_dir()
     else:
         xdg = os.environ.get("XDG_STATE_HOME")
         base = Path(xdg) / "ghidra-rpc" if xdg else Path.home() / ".local" / "state" / "ghidra-rpc"
