@@ -50,7 +50,7 @@ class TestProtocol:
     """Test the wire protocol without needing Ghidra."""
 
     @pytest.fixture(autouse=True)
-    def setup_server(self, tmp_path):
+    def setup_server(self, short_tmp_path):
         """Start a server with a mock context in a background thread.
 
         Readiness is confirmed by a real ``ping`` round-trip, not by the socket
@@ -71,9 +71,9 @@ class TestProtocol:
 
         server_main.register_handler("echo", echo_handler)
 
-        self.sock_path = tmp_path / "test.sock"
+        self.sock_path = short_tmp_path / "test.sock"
         from ghidra_rpc.session import Session
-        session = Session(mode="headless", project_gpr=tmp_path / "test.gpr", socket_path=self.sock_path)
+        session = Session(mode="headless", project_gpr=short_tmp_path / "test.gpr", socket_path=self.sock_path)
 
         self.ctx = _make_mock_context()
         self.server_thread = threading.Thread(

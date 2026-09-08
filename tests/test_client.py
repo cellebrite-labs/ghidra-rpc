@@ -23,8 +23,8 @@ class TestClient:
     """Test client send_request against a simple echo server."""
 
     @pytest.fixture(autouse=True)
-    def setup_echo_server(self, tmp_path):
-        self.sock_path = tmp_path / "echo.sock"
+    def setup_echo_server(self, short_tmp_path):
+        self.sock_path = short_tmp_path / "echo.sock"
 
         def echo_server():
             srv, _ = transport.listen(self.sock_path)

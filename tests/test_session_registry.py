@@ -233,19 +233,19 @@ class TestDiscoverInstances:
     """Integration tests for the discovery helper (uses a real mock server)."""
 
     @pytest.fixture(autouse=True)
-    def isolate_registry(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path))
+    def isolate_registry(self, short_tmp_path, monkeypatch):
+        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(short_tmp_path))
         # _discover_instances() also globs a socket dir for orphaned sockets
         # not in the registry; redirect it so this never touches /tmp and
         # can't see (or stop!) real daemons running on the host.
-        monkeypatch.setattr("ghidra_rpc.cli._SOCKET_SCAN_DIR", tmp_path)
+        monkeypatch.setattr("ghidra_rpc.cli._SOCKET_SCAN_DIR", short_tmp_path)
 
     def test_empty_when_nothing_registered_or_running(self):
         from ghidra_rpc.cli import _discover_instances
         assert _discover_instances() == []
 
-    def test_finds_running_instance(self, tmp_path):
-        sess = _make_session(tmp_path)
+    def test_finds_running_instance(self, short_tmp_path):
+        sess = _make_session(short_tmp_path)
         register(sess)
         _start_mock_server(sess)
 
@@ -260,18 +260,18 @@ class TestDiscoverInstances:
         assert isinstance(inst["pid"], int) and inst["pid"] > 0
         assert inst["socket"] == str(sess.socket_path)
 
-    def test_excludes_dead_instance_by_default(self, tmp_path):
+    def test_excludes_dead_instance_by_default(self, short_tmp_path):
         """Registered session with no running daemon is hidden by default."""
-        sess = _make_session(tmp_path)
+        sess = _make_session(short_tmp_path)
         register(sess)
         # socket file does not exist → not running
 
         from ghidra_rpc.cli import _discover_instances
         assert _discover_instances(include_dead=False) == []
 
-    def test_includes_dead_instance_with_flag(self, tmp_path):
+    def test_includes_dead_instance_with_flag(self, short_tmp_path):
         """include_dead=True surfaces entries whose socket exists but is unresponsive."""
-        sess = _make_session(tmp_path)
+        sess = _make_session(short_tmp_path)
         register(sess)
         sess.socket_path.touch()   # file present, but no server behind it
 
@@ -284,9 +284,9 @@ class TestDiscoverInstances:
         assert inst["project"] == str(sess.project_gpr.resolve())
         assert inst["pid"] is None
 
-    def test_stale_entry_pruned_when_socket_file_gone(self, tmp_path):
+    def test_stale_entry_pruned_when_socket_file_gone(self, short_tmp_path):
         """If the socket file has disappeared, the registry entry is auto-pruned."""
-        sess = _make_session(tmp_path)
+        sess = _make_session(short_tmp_path)
         register(sess)
         assert len(load_all()) == 1
         # socket file never created → it's gone
@@ -296,9 +296,9 @@ class TestDiscoverInstances:
 
         assert load_all() == [], "Stale registry entry should have been pruned"
 
-    def test_stale_entry_still_emitted_then_pruned_with_all_flag(self, tmp_path):
+    def test_stale_entry_still_emitted_then_pruned_with_all_flag(self, short_tmp_path):
         """With include_dead=True, stale entries appear in output but are still pruned."""
-        sess = _make_session(tmp_path)
+        sess = _make_session(short_tmp_path)
         register(sess)
         # socket file absent → stale
 
@@ -311,15 +311,15 @@ class TestDiscoverInstances:
         # And the registry is cleaned up
         assert load_all() == []
 
-    def test_unregistered_socket_discovered_via_glob(self, tmp_path, monkeypatch):
+    def test_unregistered_socket_discovered_via_glob(self, short_tmp_path, monkeypatch):
         """Sockets in the scan dir not in the registry are still discovered via glob."""
         # Create a socket file with the canonical naming pattern in the
         # (isolated) scan dir -- not real /tmp, per isolate_registry above.
         import hashlib
-        gpr = tmp_path / "unregistered.gpr"
+        gpr = short_tmp_path / "unregistered.gpr"
         gpr.touch()
         digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
-        sock_path = tmp_path / f"ghidra-rpc-{digest}.sock"
+        sock_path = short_tmp_path / f"ghidra-rpc-{digest}.sock"
 
         sess = Session(mode="headless", project_gpr=gpr, socket_path=sock_path)
         # Deliberately do NOT register — only start the server
@@ -341,11 +341,11 @@ class TestDiscoverInstances:
 class TestListInstancesCLI:
 
     @pytest.fixture(autouse=True)
-    def isolate_registry(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path))
+    def isolate_registry(self, short_tmp_path, monkeypatch):
+        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(short_tmp_path))
         # `stop --all` walks the same discovery path as _discover_instances;
         # without this a real daemon on the host could get stopped for real.
-        monkeypatch.setattr("ghidra_rpc.cli._SOCKET_SCAN_DIR", tmp_path)
+        monkeypatch.setattr("ghidra_rpc.cli._SOCKET_SCAN_DIR", short_tmp_path)
 
     def test_empty_result(self):
         from click.testing import CliRunner
@@ -359,8 +359,8 @@ class TestListInstancesCLI:
         assert data["result"]["count"] == 0
         assert data["result"]["instances"] == []
 
-    def test_reports_running_instance(self, tmp_path):
-        sess = _make_session(tmp_path)
+    def test_reports_running_instance(self, short_tmp_path):
+        sess = _make_session(short_tmp_path)
         register(sess)
         _start_mock_server(sess)
 
@@ -377,8 +377,8 @@ class TestListInstancesCLI:
         assert inst["mode"] == "headless"
         assert inst["pid"] is not None
 
-    def test_all_flag_includes_dead_entries(self, tmp_path):
-        sess = _make_session(tmp_path)
+    def test_all_flag_includes_dead_entries(self, short_tmp_path):
+        sess = _make_session(short_tmp_path)
         register(sess)
         sess.socket_path.touch()   # file present, no server
 
@@ -414,8 +414,8 @@ class TestListInstancesCLI:
         assert data["ok"] is False
         assert data["error"] == "InvalidArgs"
 
-    def test_stop_all_stops_running_instance(self, tmp_path):
-        sess = _make_session(tmp_path)
+    def test_stop_all_stops_running_instance(self, short_tmp_path):
+        sess = _make_session(short_tmp_path)
         register(sess)
         _start_mock_server(sess)
 

@@ -29,11 +29,8 @@
 - **Cross-platform CI** (`.github/workflows/`). `tests.yml` runs the unit
   suite on Ubuntu and Windows across Python 3.11–3.13 plus an install
   smoke-test, on every push and pull request. `integration.yml` runs the
-  Ghidra integration suite on demand. macOS is not in the matrix yet: its
-  first run exposed a pre-existing test-harness limitation (macOS caps
-  `AF_UNIX` `sun_path` at 104 bytes and pytest's `tmp_path` already exceeds
-  that), which does not affect real endpoints at `/tmp/ghidra-rpc-<hash>.sock`
-  and will be re-added with the fix.
+  Ghidra integration suite on demand. The matrix covers Ubuntu, macOS and
+  Windows.
 
 ### Changed
 
@@ -47,6 +44,15 @@
   `{address, count, listing}`; add `--with-instructions` for the previous shape.
 
 ### Fixed
+
+- Tests: socket-binding tests now use a short temp directory. macOS caps
+  `AF_UNIX` `sun_path` at 104 bytes (Linux allows 108) and pytest's `tmp_path`
+  there is rooted under `/private/var/folders/<random>/T/...`, already ~120
+  bytes, so every test that bound a socket failed with
+  `OSError: AF_UNIX path too long`. A `short_tmp_path` fixture in
+  `tests/conftest.py` roots those under `/tmp` instead. Test-harness only —
+  real endpoints are `/tmp/ghidra-rpc-<hash>.sock` at 29 bytes and were never
+  affected. This is what kept macOS out of the CI matrix.
 
 - Headless mode: a write that aborted mid-transaction could silently discard
   the *next* successful write on the following save, even an unrelated write

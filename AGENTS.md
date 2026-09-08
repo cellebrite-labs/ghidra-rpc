@@ -295,5 +295,15 @@ uv run ghidra-rpc decompile ls main
    resolves only to a local placeholder symbol, not the real function), but it's a
    general multi-binary limitation, not Dalvik-specific.
 
+9. **Test sockets must not use pytest's `tmp_path`**: macOS caps `AF_UNIX`
+   `sun_path` at 104 bytes (Linux allows 108), and `tmp_path` there is rooted
+   under `/private/var/folders/<random>/T/...` — already ~120 bytes before a
+   filename. Any test that binds a socket must take the `short_tmp_path`
+   fixture from `tests/conftest.py`, which roots under `/tmp`. In
+   `test_session_registry.py` the whole class must switch, not just the socket:
+   `_SOCKET_SCAN_DIR` has to be monkeypatched to the *same* directory the
+   sockets are created in, or the discovery tests glob an empty directory and
+   pass vacuously (see gotcha 7).
+
 > For more detail on all gotchas plus the Ghidra API reference and session/daemon
 > internals, read **`docs/internals.md`**.

@@ -23,14 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is deliberately absent for now.  Its first CI run exposed a
-        # pre-existing test-harness bug: macOS caps AF_UNIX sun_path at 104
-        # bytes (Linux allows 108), and pytest's tmp_path on a macOS runner
-        # already comes to ~124, so the tests that bind a socket cannot.  Real
-        # endpoints are /tmp/ghidra-rpc-<hash>.sock at 29 bytes, so the product
-        # is unaffected.  Re-add macos-latest together with the fix rather than
-        # carrying a job that is known-red.
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
 
     steps:
