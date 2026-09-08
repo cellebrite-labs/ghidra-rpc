@@ -21,8 +21,19 @@
 
   **GUI mode is not supported on Windows.** `launcher.py` /
   `_gui_launcher.py` are untouched by this work and unverified there; use
-  `--headless`. Windows verification covered the full test suite, the headless
-  Ghidra integration suite included; there is no Windows CI job yet.
+  `--headless`. Headless Windows is covered by CI: the unit suite runs on
+  every push and pull request, and the Ghidra integration suite — 112 tests
+  against real headless Ghidra 12.1.3 — runs on demand via the `integration`
+  workflow.
+
+- **Cross-platform CI** (`.github/workflows/`). `tests.yml` runs the unit
+  suite on Ubuntu and Windows across Python 3.11–3.13 plus an install
+  smoke-test, on every push and pull request. `integration.yml` runs the
+  Ghidra integration suite on demand. macOS is not in the matrix yet: its
+  first run exposed a pre-existing test-harness limitation (macOS caps
+  `AF_UNIX` `sun_path` at 104 bytes and pytest's `tmp_path` already exceeds
+  that), which does not affect real endpoints at `/tmp/ghidra-rpc-<hash>.sock`
+  and will be re-added with the fix.
 
 ### Changed
 
