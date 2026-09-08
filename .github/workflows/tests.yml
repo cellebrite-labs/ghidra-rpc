@@ -1,0 +1,98 @@
+name: tests
+
+on:
+  push:
+    # ci/** so this can be exercised from a topic branch: a pull_request
+    # trigger is inert for a workflow that has never existed on the default
+    # branch, which is exactly the case when CI is being introduced.
+    branches: [main, 'ci/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is deliberately absent for now.  Its first CI run exposed a
+        # pre-existing test-harness bug: macOS caps AF_UNIX sun_path at 104
+        # bytes (Linux allows 108), and pytest's tmp_path on a macOS runner
+        # already comes to ~124, so the tests that bind a socket cannot.  Real
+        # endpoints are /tmp/ghidra-rpc-<hash>.sock at 29 bytes, so the product
+        # is unaffected.  Re-add macos-latest together with the fix rather than
+        # carrying a job that is known-red.
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Only click + pytest, deliberately NOT the project's real dependencies.
+      #
+      # With pyghidra and jpype1 absent, any module-level `import ghidra.*` or
+      # `import pyghidra` that creeps into a tool module fails collection
+      # immediately — which mechanically enforces the rule in AGENTS.md that
+      # those imports stay inside handler functions, where the JVM is running.
+      # It also keeps this job to seconds and removes any dependency on wheel
+      # availability for the OS/Python pair under test.
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip click pytest
+
+      # Collect everything except the Ghidra suite, which has its own
+      # on-demand workflow.  --ignore rather than listing the files to run:
+      # a new test file is then picked up automatically instead of silently
+      # never running in CI.  And --ignore rather than relying on that suite's
+      # own GHIDRA_INSTALL_DIR skip guard, so the job cannot be derailed by a
+      # runner that happens to have Ghidra on it.
+      #
+      # `python -m pytest`, not the `pytest` console script: only the -m form
+      # puts the working directory on sys.path, and the package is not
+      # installed in this job.  The console script gives
+      # ModuleNotFoundError: No module named 'ghidra_rpc' on every platform.
+      # This also matches the command AGENTS.md documents for local runs.
+      - name: Run tests
+        run: python -m pytest -q --ignore=tests/test_integration.py
+
+  install:
+    name: install / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Covers what the unit job deliberately skips: that the real
+      # dependencies (pyghidra, jpype1) have installable wheels here, that the
+      # console scripts resolve, and that list-instances works on a machine
+      # with no daemon and no state directory yet — on Windows that is the
+      # "%LOCALAPPDATA%\ghidra-rpc does not exist" path.
+      - name: Install project
+        run: uv sync
+
+      - name: Smoke-test the CLI
+        run: |
+          uv run ghidra-rpc --version
+          uv run ghidra-rpc list-instances
