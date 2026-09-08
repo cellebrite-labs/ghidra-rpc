@@ -86,8 +86,8 @@ collisions.
 | Path | Purpose |
 |------|---------|
 | `/tmp/ghidra-rpc-<hash>.sock` | Unix socket for a running daemon (Linux/macOS) |
-| `%TEMP%\ghidra-rpc-<hash>.sock` | Authenticated loopback TCP endpoint metadata (Windows) |
-| `/tmp/ghidra-rpc-<hash>.log` or `%TEMP%\ghidra-rpc-<hash>.log` | Background daemon log (`--detach` mode) |
+| `%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.sock` | Authenticated loopback TCP endpoint metadata (Windows) |
+| `/tmp/ghidra-rpc-<hash>.log` or `%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.log` | Background daemon log (`--detach` mode) |
 | `<project-dir>/.ghidra-rpc-<hash>.json` | Per-project session file (default, alongside `.gpr`) |
 | `$GHIDRA_RPC_STATE_DIR/<hash>.json` | Per-project session file when override is set |
 | `~/Library/Application Support/ghidra-rpc/sessions.json` | Global session registry (macOS) |
