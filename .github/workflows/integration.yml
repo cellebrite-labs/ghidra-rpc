@@ -1,0 +1,152 @@
+name: integration
+
+# The Ghidra integration suite: a 543 MB download, a JDK and ~10 minutes of
+# analysis, so it is never wired to push-on-main or pull_request.  Two ways in:
+#
+#   * workflow_dispatch — the Run workflow button, once this file is on the
+#     default branch.
+#   * pushing to a ci/** branch — which is how you run it from a topic branch
+#     before it merges, since workflow_dispatch only offers workflows that are
+#     already on the default branch.
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Runner to test on
+        type: choice
+        default: windows-latest
+        options: [windows-latest, ubuntu-latest, macos-latest]
+      ghidra_version:
+        description: Ghidra release version
+        type: string
+        default: "12.1.3"
+  push:
+    branches: ['ci/**']
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: integration / ${{ inputs.os || 'windows-latest' }}
+    runs-on: ${{ inputs.os || 'windows-latest' }}
+    timeout-minutes: 90
+
+    env:
+      GHIDRA_VERSION: ${{ inputs.ghidra_version || '12.1.3' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Ghidra 12.1 declares application.java.min=21 with no maximum.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Cache the Ghidra archive
+        id: ghidra-cache
+        uses: actions/cache@v4
+        with:
+          path: ghidra.zip
+          key: ghidra-${{ env.GHIDRA_VERSION }}
+
+      # The asset filename carries a build date (ghidra_12.1.3_PUBLIC_20260817.zip)
+      # that cannot be derived from the version, so resolve it from the release
+      # API.  Public release assets need no authentication.
+      - name: Download Ghidra
+        if: steps.ghidra-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL \
+            "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/tags/Ghidra_${GHIDRA_VERSION}_build" \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["assets"][0]["browser_download_url"])')
+          echo "Resolved: $url"
+          curl -fsSL -o ghidra.zip "$url"
+
+      # Catch a truncated download or an HTML error page here, where the
+      # message is obvious, instead of letting the extractor report something
+      # cryptic several steps later.  Runs on a cache hit too, so a poisoned
+      # cache entry is caught as well.
+      - name: Verify the archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          size=$(wc -c < ghidra.zip)
+          echo "ghidra.zip is $size bytes"
+          test "$size" -gt 100000000 || { echo "implausibly small for a Ghidra release"; exit 1; }
+
+      # Extraction differs by platform on purpose.  On Linux and macOS use
+      # unzip: Python's zipfile does not restore the executable bit, which
+      # would leave Ghidra's native decompiler non-executable.
+      #
+      # On Windows use 7-Zip rather than tar.  `shell: bash` there is Git Bash,
+      # whose PATH resolves `tar` to Git's GNU tar, which cannot read a zip at
+      # all ("This does not look like a tar archive") — Windows' own bsdtar in
+      # System32 can, but 7z is on the runner PATH unambiguously and is far
+      # faster than Expand-Archive on a 543 MB archive.
+      - name: Extract Ghidra (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ghidra-install | Out-Null
+          7z x -y -bso0 -bd -oghidra-install ghidra.zip
+          if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE" }
+
+      - name: Extract Ghidra (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mkdir -p ghidra-install && unzip -q ghidra.zip -d ghidra-install
+
+      - name: Locate GHIDRA_INSTALL_DIR
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=$(find ghidra-install -maxdepth 1 -mindepth 1 -type d -name 'ghidra_*' | head -1)
+          test -n "$dir" || { echo "Ghidra directory not found"; ls -la ghidra-install; exit 1; }
+          # `pwd -W` on Windows: plain pwd in Git Bash yields an MSYS path
+          # (/d/a/...), which Windows Python then cannot resolve at all —
+          # it arrives as \d\a\... and Ghidra validation rejects it.
+          # -W emits a native D:/a/... path instead.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            abs=$(cd "$dir" && pwd -W)
+          else
+            abs=$(cd "$dir" && pwd)
+          fi
+          echo "GHIDRA_INSTALL_DIR=$abs" >> "$GITHUB_ENV"
+          echo "Using $abs"
+
+      - name: Install project
+        run: uv sync
+
+      - name: Run the integration suite
+        run: uv run pytest tests/test_integration.py -v --tb=short
+
+      # The daemon runs as a detached subprocess, so a failure inside it shows
+      # up in its log rather than in pytest's output.
+      - name: Collect daemon logs
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p daemon-logs
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$LOCALAPPDATA/ghidra-rpc/"*.log daemon-logs/ 2>/dev/null || true
+          else
+            cp /tmp/ghidra-rpc-*.log daemon-logs/ 2>/dev/null || true
+          fi
+          ls -la daemon-logs || true
+
+      - name: Upload daemon logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-logs-${{ runner.os }}
+          path: daemon-logs/
+          if-no-files-found: ignore
