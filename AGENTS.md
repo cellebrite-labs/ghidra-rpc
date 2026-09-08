@@ -32,15 +32,23 @@ ghidra-rpc/
 ├── ghidra_rpc/           — Python package
 │   ├── __init__.py       — Version
 │   ├── cli.py            — Click CLI (ghidra-rpc entry point, all user commands)
-│   ├── client.py         — Unix socket client (send_request, auto-restart logic)
+│   ├── client.py         — Local transport client (send_request, auto-restart logic)
 │   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background, stop)
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
 │   │                       from session or current env to the child process.
 │   ├── session.py        — Session persistence
-│   │                       • Socket path: /tmp/ghidra-rpc-<hash>.sock
+│   │                       • Endpoint path: /tmp/ghidra-rpc-<hash>.sock, or
+│   │                         %LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.sock on
+│   │                         Windows (a descriptor holding the loopback port +
+│   │                         auth token — see transport.py)
 │   │                       • Session file: <gpr-dir>/.ghidra-rpc-<hash>.json (default)
 │   │                         or $GHIDRA_RPC_STATE_DIR/<hash>.json
 │   │                       • Fields: mode, project_gpr, socket_path, ghidra_install_dir
+│   ├── transport.py      — Cross-platform local transport: AF_UNIX socket on POSIX,
+│   │                       token-authenticated 127.0.0.1 TCP on Windows (where
+│   │                       CPython exposes no AF_UNIX).  listen()/connect() return
+│   │                       the auth token, None on POSIX.  Also owns
+│   │                       endpoint_directory() and windows_state_dir().
 │   │
 │   └── server/           — Daemon internals (runs inside Ghidra's JVM via pyghidra)
 │       ├── __init__.py

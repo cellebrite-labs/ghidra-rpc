@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Windows support (headless mode only).** The daemon and CLI now run on
+  Windows. `ghidra_rpc/transport.py` abstracts the IPC transport: Linux and
+  macOS keep the Unix domain socket unchanged, while Windows — where CPython
+  exposes no `AF_UNIX` — uses a TCP listener bound to `127.0.0.1` on an
+  OS-assigned port. Because a loopback port is reachable by any local process,
+  the daemon generates a 256-bit token at startup and rejects every request
+  that does not present it (`Unauthorized`). The port and token are published
+  in a per-user endpoint descriptor at
+  `%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.sock`, and the listener claims
+  its port with `SO_EXCLUSIVEADDRUSE`. The session registry gets a real
+  `msvcrt` file lock rather than degrading to unlocked writes, and
+  `--detach` uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` since
+  `start_new_session` is a no-op on Windows. The newline-delimited JSON wire
+  format and every CLI command are unchanged on all platforms.
+
+  **GUI mode is not supported on Windows.** `launcher.py` /
+  `_gui_launcher.py` are untouched by this work and unverified there; use
+  `--headless`. Windows verification covered the full test suite, the headless
+  Ghidra integration suite included.
+
 ### Changed
 
 - **Breaking:** `disassemble` no longer returns the `instructions` array by

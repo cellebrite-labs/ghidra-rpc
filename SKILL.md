@@ -30,7 +30,8 @@ Before using any commands, verify the setup:
    (blocking, human-only). The `--headless` flag skips the GUI. For non-blocking / automated
    startup use `start --detach --headless` or `restart --headless`. Both commands accept
    `--timeout SECS` (default: 60 s headless, 180 s GUI) and log daemon output to
-   `/tmp/ghidra-rpc-<hash>.log`.
+   `/tmp/ghidra-rpc-<hash>.log` (`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.log`
+   on Windows).
 2. **GUI mode: verify the correct project is active.** The daemon passes the `--project` path
    directly to GhidraRun so Ghidra opens the requested project immediately. After
    `start --detach` (GUI mode), confirm the right project is loaded before issuing any
@@ -416,12 +417,14 @@ open in CodeBrowser. Use `list-project-programs` to see what's stored in the pro
 repo, then open it in CodeBrowser's Project window.
 
 **Daemon log file**: When started in the background (`start --detach` or `restart`),
-logs are written to `/tmp/ghidra-rpc-<hash>.log` (same directory and stem as the Unix
-socket). If the daemon fails to start or become responsive, check that file first:
+logs are written to `/tmp/ghidra-rpc-<hash>.log` — same directory and stem as the
+daemon endpoint, so on Windows that is
+`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.log`. If the daemon fails to start or
+become responsive, check that file first:
 ```bash
 tail -50 /tmp/ghidra-rpc-*.log
 ```
-The timeout error message always prints the exact log path.
+The timeout error message always prints the exact log path, on every platform.
 
 **`GHIDRA_INSTALL_DIR` not found after backgrounding**: Environment variables may be
 lost when daemonising (nohup, cron, systemd units, etc.). Fix options, in order of preference:
@@ -564,7 +567,8 @@ Then inform the user:
 >  If you'd like to submit it, run: `cat /tmp/ghidra-rpc-issues-*.md`"
 
 The report is written to `/tmp` so it stays local to the machine and is lost on reboot -
-it is never sent anywhere automatically.
+it is never sent anywhere automatically. On Windows write it to `%TEMP%` instead; the
+snippet above is bash, so adapt it to the shell you are actually running.
 
 ## Further Documentation
 
