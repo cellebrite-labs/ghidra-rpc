@@ -6,7 +6,6 @@ import json
 import os
 import secrets
 import socket
-import tempfile
 from pathlib import Path
 
 
@@ -14,10 +13,31 @@ _IS_WINDOWS = os.name == "nt"
 _WINDOWS_HOST = "127.0.0.1"
 
 
+def windows_state_dir() -> Path:
+    """Return the per-user state directory used on Windows.
+
+    ``%LOCALAPPDATA%\\ghidra-rpc``, falling back to the conventional location
+    under the user profile when the variable is unset.  This is also where the
+    global session registry lives (see ``session._registry_path``).
+    """
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "ghidra-rpc"
+    return Path.home() / "AppData" / "Local" / "ghidra-rpc"
+
+
 def endpoint_directory() -> Path:
-    """Return the directory used for daemon endpoint files."""
+    """Return the directory used for daemon endpoint files.
+
+    On Unix this is ``/tmp``, where the domain socket's own file permissions
+    keep other users out.  On Windows the endpoint file carries the daemon's
+    authentication token in plaintext, so it must live somewhere only this user
+    can read: ``%LOCALAPPDATA%\\ghidra-rpc``, not the temporary directory.
+    ``tempfile.gettempdir()`` falls back to ``C:\\TEMP`` or the working
+    directory when ``%TEMP%`` is unset, neither of which is per-user.
+    """
     if _IS_WINDOWS:
-        return Path(tempfile.gettempdir())
+        return windows_state_dir()
     return Path("/tmp")
 
 
@@ -40,6 +60,12 @@ def listen(endpoint_path: Path, backlog: int = 5) -> tuple[socket.socket, str | 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     temporary_path: Path | None = None
     try:
+        # Claim the port exclusively.  Without this a second process may bind
+        # the same port by setting SO_REUSEADDR — on Windows that option grants
+        # the *newcomer* the binding rather than refusing it, which would let a
+        # local process hijack the endpoint and collect our auth token.
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         server.bind((_WINDOWS_HOST, 0))
         server.listen(backlog)
         token = secrets.token_urlsafe(32)
