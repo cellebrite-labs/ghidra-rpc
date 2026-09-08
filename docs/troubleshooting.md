@@ -38,6 +38,11 @@ ghidra-rpc start --project /path/to/project.gpr --headless
 The daemon normally cleans up its socket on shutdown, but if it's killed (SIGKILL, power
 loss), the socket file may remain.
 
+On Windows the equivalent file is the endpoint descriptor recording the daemon's
+loopback port and auth token, at
+`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-XXXXXXXX.sock`. `status` prints its path the
+same way; delete it with `del` instead of `rm`.
+
 ## macOS Framework Python Issue
 
 **Symptom**: GUI mode crashes immediately on macOS with AWT or Swing errors.
