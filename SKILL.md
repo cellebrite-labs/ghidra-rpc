@@ -103,7 +103,7 @@ session only (daemon stopped), and `null` if no session exists.
 | `ghidra-rpc decompile <binary> <func> [--timeout SECS]` | Decompile to pseudo-C (default **120 s**) | `{name, address, signature, c_code}` |
 | `ghidra-rpc basic-blocks <binary> <func> [--limit N]` | Get basic blocks (CFG) of a function | `{name, address, blocks:[{start,end,size,instructions,successors,predecessors}], num_blocks, edges}` |
 | `ghidra-rpc pcode <binary> <func> [--high] [--timeout SECS] [--limit N]` | Get P-code (Ghidra IR); raw or high SSA form (--high) | `{name, address, mode, ops:[{address,seq,opcode,output,inputs}], count, truncated}` |
-| `ghidra-rpc search-decompiled <binary> <regex> [--class NAME] [--case-sensitive] [--limit N] [--max-scan N] [--timeout SECS] [--socket-timeout SECS]` | Regex-search decompiled C across many functions in one call (skips one-RPC-per-function `decompile`+grep loops) | `{matches:[{function,address,matching_lines:[{line,text}]}], count, functions_searched, functions_total, truncated}` |
+| `ghidra-rpc search-decompiled <binary> <regex> [--class NAME] [--case-sensitive] [--limit N] [--max-scan N] [--address-min ADDR] [--address-max ADDR] [--timeout SECS] [--socket-timeout SECS]` | Regex-search decompiled C across many functions in one call (skips one-RPC-per-function `decompile`+grep loops) | `{matches:[{function,address,matching_lines:[{line,text}]}], count, functions_searched, functions_total, truncated, scanned_range:{min,max}, next_unscanned_address}` |
 
 `<func>` can be a function name or hex address (e.g., `main` or `0x401000`). If the name
 is ambiguous, the error message lists matches so you can use the address instead.
@@ -115,6 +115,11 @@ app.apk targetF1 --class
 com::example::Foo`. `--max-scan` (default 5000) bounds how many functions get decompiled
 when `--class` isn't given, so a search on a 50k+-function binary can't run away; raise
 `--socket-timeout` (default 1800s) alongside it if you do widen the scan.
+
+**Check coverage before concluding "no matches".** `truncated: true` means only
+`scanned_range` was searched, not the whole binary. Resume with
+`--address-min <next_unscanned_address>` (keeping the same `--address-max`, if any)
+until `next_unscanned_address` is `null`.
 
 ### Search
 

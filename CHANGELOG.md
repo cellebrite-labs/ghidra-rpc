@@ -4,6 +4,11 @@
 
 ### Added
 
+- `search-decompiled` reports which functions it actually covered:
+  `scanned_range` (`{min, max}` entry addresses searched) and
+  `next_unscanned_address` (where to resume, `null` when coverage is
+  complete). New `--address-min`/`--address-max` restrict the sweep, so a
+  truncated search can be resumed without re-decompiling what was covered.
 - **Full Windows support: headless and GUI mode.**
   - **Transport**: `ghidra_rpc/transport.py` abstracts the IPC layer.
     Windows (no `AF_UNIX`) uses a token-authenticated TCP listener on

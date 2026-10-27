@@ -671,6 +671,30 @@ class TestDecompilerAndDisassembly:
         assert result["count"] <= 1
         assert result["truncated"] is True
 
+    def test_search_decompiled_pages_by_next_unscanned_address(self, daemon):
+        """Windows chained via next_unscanned_address cover every function
+        exactly once -- i.e. Ghidra's address strings round-trip as address_min."""
+        args = {"binary": daemon["short_name"], "pattern": "zz_no_match_zz",
+                "max_functions": 2}
+        full = rpc(daemon["sock"], "search_decompiled",
+                   {**args, "max_functions": 5000})["result"]
+        assert full["next_unscanned_address"] is None
+
+        searched = 0
+        windows = 0
+        next_addr = None
+        while True:
+            window_args = dict(args, address_min=next_addr) if next_addr else args
+            result = rpc(daemon["sock"], "search_decompiled", window_args)["result"]
+            searched += result["functions_searched"]
+            windows += 1
+            next_addr = result["next_unscanned_address"]
+            if next_addr is None:
+                break
+            assert int(next_addr, 16) > int(result["scanned_range"]["max"], 16)
+        assert windows > 1, "fixture too small to exercise paging"
+        assert searched == full["functions_total"]
+
     def test_search_decompiled_invalid_regex_errors(self, daemon):
         from ghidra_rpc.client import DaemonError, send_request
         try:

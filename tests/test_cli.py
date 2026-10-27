@@ -115,6 +115,37 @@ class TestListBookmarksCategoryFilter:
         assert captured["args"]["category"] == "BLE-Protocol"
 
 
+class TestSearchDecompiledOptions:
+    """--address-min/--address-max are forwarded to the RPC args."""
+
+    def _invoke(self, tmp_path, monkeypatch, *extra):
+        captured = {}
+
+        def fake_rpc_command(gpr, cmd, args, socket_timeout=None):
+            captured["args"] = args
+
+        import ghidra_rpc.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_rpc_command", fake_rpc_command)
+
+        result = CliRunner().invoke(
+            cli, ["search-decompiled", "bin", "target", *extra,
+                  "--project", str(tmp_path / "test.gpr")]
+        )
+        assert result.exit_code == 0
+        return captured
+
+    def test_address_range_forwarded(self, tmp_path, monkeypatch):
+        captured = self._invoke(tmp_path, monkeypatch,
+                                "--address-min", "0x1000", "--address-max", "0x2000")
+        assert captured["args"]["address_min"] == "0x1000"
+        assert captured["args"]["address_max"] == "0x2000"
+
+    def test_address_range_omitted_by_default(self, tmp_path, monkeypatch):
+        captured = self._invoke(tmp_path, monkeypatch)
+        assert "address_min" not in captured["args"]
+        assert "address_max" not in captured["args"]
+
+
 class TestDisassembleWithInstructions:
     """--with-instructions flag parsing and forwarding test."""
 

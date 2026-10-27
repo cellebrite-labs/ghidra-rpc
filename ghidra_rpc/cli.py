@@ -1880,12 +1880,18 @@ def decompile_all(binary: str, timeout: int, limit: int | None, offset: int,
                    "and searched, in case --class isn't given on a huge binary.")
 @click.option("--timeout", "-t", type=int, default=60, show_default=True,
               help="Per-function decompiler timeout in seconds.")
+@click.option("--address-min", "address_min", default="",
+              help="Only search functions at or above this address (hex). "
+                   "Pass a previous result's next_unscanned_address to resume.")
+@click.option("--address-max", "address_max", default="",
+              help="Only search functions at or below this address (hex).")
 @click.option("--socket-timeout", type=float, default=1800.0, show_default=True,
               help="Max seconds to wait for the whole sweep to finish. Raise "
                    "this for binaries with many thousands of functions.")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
 def search_decompiled(binary: str, pattern: str, class_filter: str, case_sensitive: bool,
-                       limit: int, max_scan: int, timeout: int, socket_timeout: float,
+                       limit: int, max_scan: int, timeout: int, address_min: str,
+                       address_max: str, socket_timeout: float,
                        project: str | None):
     """Regex-search decompiled C across many functions in one call.
 
@@ -1893,6 +1899,10 @@ def search_decompiled(binary: str, pattern: str, class_filter: str, case_sensiti
     decompiled output.  Use --class to scope the sweep to a namespace (e.g.
     a DEX/APK class) instead of hand-rolling a symbols+decompile+grep loop
     per function.
+
+    The result's scanned_range and next_unscanned_address show which
+    functions were actually covered; page through the rest with
+    --address-min.
 
     Note: PATTERN and --class are matched against Ghidra's own decompiled
     output and qualified names, so results are only as good as Ghidra's
@@ -1905,6 +1915,10 @@ def search_decompiled(binary: str, pattern: str, class_filter: str, case_sensiti
     }
     if class_filter:
         args["class_filter"] = class_filter
+    if address_min:
+        args["address_min"] = address_min
+    if address_max:
+        args["address_max"] = address_max
     _rpc_command(_resolve_project(project), "search_decompiled", args, socket_timeout=socket_timeout)
 
 

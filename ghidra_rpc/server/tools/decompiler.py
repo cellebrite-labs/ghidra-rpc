@@ -116,18 +116,29 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
                           (default 5000); stops the sweep early on very
                           large programs (e.g. 50k+-function DEX files)
         timeout       -- per-function decompiler timeout in seconds (default 60)
+        address_min   -- optional: only search functions whose entry point is
+                          at or above this address
+        address_max   -- optional: only search functions whose entry point is
+                          at or below this address
 
     Returns a dict with:
-        matches             -- list of {function, address, matching_lines}
-                                where matching_lines is a list of
-                                {line, text}
-        count               -- number of functions with at least one match
-        functions_searched  -- number of functions actually decompiled
-        functions_total     -- number of functions matching class_filter
-                                (before the limit/max_functions cutoff)
-        truncated           -- True if the sweep stopped before covering
-                                every candidate function (limit or
-                                max_functions reached)
+        matches                -- list of {function, address, matching_lines}
+                                   where matching_lines is a list of
+                                   {line, text}
+        count                  -- number of functions with at least one match
+        functions_searched     -- number of functions actually decompiled
+        functions_total        -- number of functions matching class_filter and
+                                   the address range (before the
+                                   limit/max_functions cutoff)
+        truncated              -- True if the sweep stopped before covering
+                                   every candidate function (limit or
+                                   max_functions reached)
+        scanned_range          -- {min, max} entry addresses of the first and
+                                   last function actually searched, or None
+                                   if nothing was searched
+        next_unscanned_address -- entry address of the first candidate not
+                                   searched (pass it back as address_min to
+                                   resume), or None if coverage is complete
     """
     import re
 
@@ -155,10 +166,38 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
     fm = pi.program.getFunctionManager()
     class_filter_lower = class_filter.lower() if class_filter else None
 
+    address_min_str = args.get("address_min", "")
+    address_max_str = args.get("address_max", "")
+    address_min = None
+    address_max = None
+    if address_min_str or address_max_str:
+        from ghidra_rpc.server.context import _parse_address
+        if address_min_str:
+            address_min = _parse_address(pi.program, address_min_str)
+        if address_max_str:
+            address_max = _parse_address(pi.program, address_max_str)
+
+    # Start the iterator at address_min to skip functions before the range.
+    if address_min is not None:
+        func_iter = fm.getFunctions(address_min, True)
+    else:
+        func_iter = fm.getFunctions(True)
+
     candidates = []
-    for func in fm.getFunctions(True):
+    for func in func_iter:
         if func.isExternal() or func.isThunk():
             continue
+        if address_min is not None or address_max is not None:
+            entry = func.getEntryPoint()
+            try:
+                if address_min is not None and entry.compareTo(address_min) < 0:
+                    continue
+                if address_max is not None and entry.compareTo(address_max) > 0:
+                    # Functions are iterated in address order; nothing further in range.
+                    break
+            except Exception:
+                # Address comparison failed (different address spaces) — skip.
+                continue
         qualified_name = str(func.getSymbol().getName(True))
         if class_filter_lower and class_filter_lower not in qualified_name.lower():
             continue
@@ -197,12 +236,24 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
                 "matching_lines": matching_lines,
             })
 
+    scanned_range = None
+    if functions_searched:
+        scanned_range = {
+            "min": str(candidates[0][0].getEntryPoint()),
+            "max": str(candidates[functions_searched - 1][0].getEntryPoint()),
+        }
+    next_unscanned_address = None
+    if functions_searched < total:
+        next_unscanned_address = str(candidates[functions_searched][0].getEntryPoint())
+
     return {
         "matches": matches,
         "count": len(matches),
         "functions_searched": functions_searched,
         "functions_total": total,
         "truncated": truncated,
+        "scanned_range": scanned_range,
+        "next_unscanned_address": next_unscanned_address,
     }
 
 

@@ -66,7 +66,9 @@ ghidra-rpc/
 │           │                     list_calling_conventions
 │           ├── decompiler.py   — decompile, _find_function (name/address resolution),
 │           │                     search_decompiled (regex-search decompiled C across
-│           │                     many functions in one call; optional class_filter)
+│           │                     many functions in one call; optional class_filter,
+│           │                     address_min/max; reports scanned_range +
+│           │                     next_unscanned_address for paging)
 │           ├── search.py       — strings, symbols, find_bytes (byte pattern search)
 │           ├── xrefs.py        — xrefs_to (optional all_binaries: also searches every
 │           │                     other loaded program for a matching fully-qualified
