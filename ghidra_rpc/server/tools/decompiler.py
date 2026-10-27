@@ -42,7 +42,7 @@ def _find_function(pi, name_or_address: str):
     if len(exact_matches) == 1:
         return exact_matches[0]
     elif len(exact_matches) > 1:
-        suggestions = [f"{f.getName()} @ {f.getEntryPoint()}" for f in exact_matches]
+        suggestions = [f"{f.getName()} @ 0x{f.getEntryPoint()}" for f in exact_matches]
         raise ValueError(
             f"Ambiguous function name '{name_or_address}'. Matches: {suggestions}"
         )
@@ -50,12 +50,12 @@ def _find_function(pi, name_or_address: str):
     if len(partial_matches) == 1:
         return partial_matches[0]
     elif len(partial_matches) > 1:
-        suggestions = [f"{f.getName()} @ {f.getEntryPoint()}" for f in partial_matches[:10]]
+        suggestions = [f"{f.getName()} @ 0x{f.getEntryPoint()}" for f in partial_matches[:10]]
         raise ValueError(
             f"Ambiguous function name '{name_or_address}'. Partial matches: {suggestions}"
         )
 
-    raise ValueError(f"Function '{name_or_address}' not found.")
+    raise ValueError(f"Function '{name_or_address}' not found. If '{name_or_address} is an address, pass it with a 0x prefix")
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
