@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import queue
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -795,7 +796,7 @@ class GuiContext:
             return bool(service.goTo(addr_obj, pi.program))
 
         success = bool(self.run_on_swing(do_goto))
-        return {"address": str(addr_obj), "success": success}
+        return {"address": _fmt_address(addr_obj), "success": success}
 
     def _find_tool_for_program(self, program):
         from ghidra.app.services import ProgramManager
@@ -825,10 +826,47 @@ class GuiContext:
             self.launcher.request_shutdown()
 
 
+# A string _fmt_address() could have produced: "0x<hex>", optionally
+# space-qualified ("register:0x20", "ov1::0x1000").  The 0x tail is what makes
+# it unambiguous — no C/C++ identifier starts with a digit.
+_ADDRESS_RE = re.compile(r"^(?:\S+?::?)?0[xX][0-9a-fA-F]+$")
+
+
+def _looks_like_address(s: str) -> bool:
+    """True if *s* is in the address form _fmt_address() emits (0x-prefixed)."""
+    return bool(_ADDRESS_RE.match(s.strip()))
+
+
+def _fmt_address(addr) -> str | None:
+    """Format a Ghidra Address for output; the inverse of _parse_address().
+
+    Every address the daemon returns goes through here, so agents copying it
+    back get a form that function/address resolution treats as an address:
+
+      default space     0x00101139         (Ghidra's zero-padding kept)
+      other spaces      register:0x00000020, EXTERNAL:0x00000001
+      overlay spaces    ov1::0x00001000
+      stack             Stack[-0x10]       (Ghidra's own form, unchanged)
+    """
+    if addr is None:
+        return None
+    s = str(addr)
+    if addr.getAddressSpace().isStackSpace():
+        return s
+    offset = str(addr.toString(False))
+    if not s.endswith(offset):
+        return s
+    return f"{s[:len(s) - len(offset)]}0x{offset}"
+
+
 def _parse_address(program, address: str):
-    """Parse a hex address string into a Ghidra Address object."""
-    addr_str = address[2:] if address.lower().startswith("0x") else address
-    addr = program.getAddressFactory().getAddress(addr_str)
+    """Parse an address string into a Ghidra Address object.
+
+    Accepts everything _fmt_address() emits ("0x...", "space:0x...",
+    "overlay::0x...") as well as bare hex; AddressFactory handles the 0x
+    prefix and space qualifiers itself.
+    """
+    addr = program.getAddressFactory().getAddress(address.strip())
     if addr is None:
         raise ValueError(f"Invalid address: {address}")
     return addr

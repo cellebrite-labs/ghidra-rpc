@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 logger = logging.getLogger("ghidra-rpc.vt")
@@ -202,8 +203,8 @@ def _handle_version_track(ctx, args: dict) -> dict:
                 if similarity < min_similarity:
                     continue
 
-                src_addr = str(match.getSourceAddress())
-                dst_addr = str(match.getDestinationAddress())
+                src_addr = _fmt_address(match.getSourceAddress())
+                dst_addr = _fmt_address(match.getDestinationAddress())
 
                 src_func_name = _get_function_name_at(src_prog, match.getSourceAddress())
                 dst_func_name = _get_function_name_at(dst_prog, match.getDestinationAddress())
@@ -370,7 +371,7 @@ def _get_unmatched_functions(program, matched_addrs: set) -> list[dict]:
     for func in fm.getFunctions(True):
         if func.isExternal() or func.isThunk():
             continue
-        addr_str = str(func.getEntryPoint())
+        addr_str = _fmt_address(func.getEntryPoint())
         if addr_str not in matched_addrs:
             unmatched.append({
                 "name": str(func.getName()),
@@ -408,7 +409,7 @@ def _handle_match_function(ctx, args: dict) -> dict:
     pi_src_daemon = ctx.get_program(source_binary)
     src_func = _find_function(pi_src_daemon, func_name)
     src_func_name = str(src_func.getName())
-    src_addr_str = str(src_func.getEntryPoint())
+    src_addr_str = _fmt_address(src_func.getEntryPoint())
 
     # Temporarily close and reopen for VT
     consumer = "ghidra-rpc-match"
@@ -501,14 +502,14 @@ def _run_correlator_and_collect(
 
         correlator_name = str(factory_instance.getName())
         for match in match_set.getMatches():
-            if str(match.getSourceAddress()) == src_addr_str:
+            if _fmt_address(match.getSourceAddress()) == src_addr_str:
                 dst_addr = match.getDestinationAddress()
                 dst_func_name = _get_function_name_at(dst_prog, dst_addr)
                 similarity = match.getSimilarityScore().getScore()
                 confidence = match.getConfidenceScore().getScore()
                 candidates.append({
                     "name": dst_func_name,
-                    "address": str(dst_addr),
+                    "address": _fmt_address(dst_addr),
                     "similarity": round(similarity, 4),
                     "confidence": round(confidence, 4),
                     "correlator": correlator_name,
@@ -569,7 +570,7 @@ def _handle_decompile_all(ctx, args: dict) -> dict:
             if error_msg and error_msg.strip():
                 results.append({
                     "name": str(func.getName()),
-                    "address": str(func.getEntryPoint()),
+                    "address": _fmt_address(func.getEntryPoint()),
                     "signature": str(func.getSignature()),
                     "c_code": None,
                     "error": str(error_msg),
@@ -582,14 +583,14 @@ def _handle_decompile_all(ctx, args: dict) -> dict:
 
             results.append({
                 "name": str(func.getName()),
-                "address": str(func.getEntryPoint()),
+                "address": _fmt_address(func.getEntryPoint()),
                 "signature": str(decompiled.getSignature()) if decompiled else str(func.getSignature()),
                 "c_code": c_code,
             })
         except Exception as e:
             results.append({
                 "name": str(func.getName()),
-                "address": str(func.getEntryPoint()),
+                "address": _fmt_address(func.getEntryPoint()),
                 "signature": str(func.getSignature()),
                 "c_code": None,
                 "error": str(e),
@@ -673,10 +674,10 @@ def _handle_function_diff(ctx, args: dict) -> dict:
     return {
         "binary1": binary1,
         "func1": str(f1.getName()),
-        "func1_address": str(f1.getEntryPoint()),
+        "func1_address": _fmt_address(f1.getEntryPoint()),
         "binary2": binary2,
         "func2": str(f2.getName()),
-        "func2_address": str(f2.getEntryPoint()),
+        "func2_address": _fmt_address(f2.getEntryPoint()),
         "mode": mode,
         "is_identical": is_identical,
         "diff": "\n".join(diff) if diff else "(functions are identical after normalisation)",

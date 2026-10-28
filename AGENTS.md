@@ -57,7 +57,9 @@ ghidra-rpc/
 │       ├── _gui_launcher.py — GUI launcher (adapted from pyghidra-mcp)
 │       ├── context.py    — HeadlessContext, GuiContext, DecompilerPool, ProgramInfo,
 │       │                   _run_analysis() (supports timeout + best-effort cancel),
-│       │                   _parse_address(), _iter_functions_in_range() (shared
+│       │                   _fmt_address() / _parse_address() (0x-prefixed address
+│       │                   output and its inverse; _looks_like_address()),
+│       │                   _iter_functions_in_range() (shared
 │       │                   address_min/max filter for functions + search_decompiled)
 │       └── tools/        — Command handlers (one module per domain)
 │           ├── __init__.py     — register_all_tools()
@@ -137,6 +139,8 @@ ghidra-rpc/
     ├── test_gui_context.py      — GuiContext._project_matches / _normalize_project_location
     │                              against a fake ProjectLocator (no Ghidra needed); regression
     │                              coverage for the Windows drive-letter path bug (gotcha 12)
+    ├── test_address_format.py   — _fmt_address / _looks_like_address and _find_function's
+    │                              address vs. bare-hex handling, with fakes (no Ghidra needed)
     ├── test_integration.py      — End-to-end integration tests against a real headless
     │                              Ghidra daemon loading tests/fixtures/testapp, covering
     │                              every API domain.  Skipped unless GHIDRA_INSTALL_DIR is
@@ -184,6 +188,8 @@ User Terminal                      Background Process (same machine)
    - `args` is the `"args"` dict from the request
    - Return a dict (becomes `"result"` in the response)
    - Raise exceptions for errors (become `"error"` + `"message"`)
+   - Emit addresses with `_fmt_address(addr)` from `context.py` (0x-prefixed,
+     round-trips through `_parse_address`), never `str(addr)`
 3. Register: `register_handler("foo", _handle_foo)` at module level.
 4. Import the module in `tools/__init__.py` → `register_all_tools()` auto-registers it.
 5. Add a CLI subcommand in `cli.py` that calls `_rpc_command(gpr, "foo", {...})`.
@@ -244,7 +250,8 @@ uv venv && uv pip install -e .
 ### Running Tests (no Ghidra needed)
 ```bash
 python -m pytest tests/test_protocol.py tests/test_client.py tests/test_session_registry.py \
-  tests/test_cli.py tests/test_search_decompiled.py tests/test_gui_context.py -v
+  tests/test_cli.py tests/test_search_decompiled.py tests/test_gui_context.py \
+  tests/test_address_format.py -v
 ```
 
 ### Running Integration Tests (requires Ghidra)

@@ -9,6 +9,7 @@ Provides commands for managing function tags:
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.decompiler import _find_function
 from ghidra_rpc.server.tools.modifications import (
@@ -66,7 +67,7 @@ def _handle_tag_function(ctx, args: dict) -> dict:
         all_tags = [str(t.getName()) for t in func.getTags()]
 
         return {
-            "address":  str(func.getEntryPoint()),
+            "address":  _fmt_address(func.getEntryPoint()),
             "name":     str(func.getName()),
             "tag":      tag,
             "all_tags": sorted(all_tags),
@@ -117,7 +118,7 @@ def _handle_untag_function(ctx, args: dict) -> dict:
 
         all_tags = [str(t.getName()) for t in func.getTags()]
         return {
-            "address":  str(func.getEntryPoint()),
+            "address":  _fmt_address(func.getEntryPoint()),
             "name":     str(func.getName()),
             "tag":      tag,
             "removed":  removed,
@@ -206,7 +207,7 @@ def _handle_functions_by_tag(ctx, args: dict) -> dict:
                 if len(functions) < limit:
                     functions.append({
                         "name":      str(func.getName()),
-                        "address":   str(func.getEntryPoint()),
+                        "address":   _fmt_address(func.getEntryPoint()),
                         "signature": str(func.getSignature()),
                     })
 

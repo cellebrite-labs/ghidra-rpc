@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address, _looks_like_address, _parse_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.decompiler import _find_function
 
@@ -9,17 +10,9 @@ from ghidra_rpc.server.tools.decompiler import _find_function
 def _resolve_address(pi, target: str):
     """Resolve a target (function name or hex address) to a Ghidra Address."""
     prog = pi.program
-    af = prog.getAddressFactory()
 
-    # Try as address
-    if target.startswith("0x") or target.startswith("0X"):
-        addr_str = target[2:]
-        try:
-            addr = af.getAddress(addr_str)
-            if addr:
-                return addr
-        except Exception:
-            pass
+    if _looks_like_address(target):
+        return _parse_address(prog, target)
 
     # Try as function
     try:
@@ -78,7 +71,7 @@ def _collect_xrefs_at(pi, addr, limit: int) -> list[dict]:
                 break
             from_func = fm.getFunctionContaining(ref.getFromAddress())
             xrefs.append({
-                "from_address": str(ref.getFromAddress()),
+                "from_address": _fmt_address(ref.getFromAddress()),
                 "from_function": str(from_func.getName()) if from_func else None,
                 "type": str(ref.getReferenceType()),
             })
@@ -208,8 +201,8 @@ def _handle_xrefs_from(ctx, args: dict) -> dict:
                 if to_func is None:
                     to_func = fm.getFunctionContaining(ref.getToAddress())
                 xrefs.append({
-                    "from_address": str(ref.getFromAddress()),
-                    "to_address": str(ref.getToAddress()),
+                    "from_address": _fmt_address(ref.getFromAddress()),
+                    "to_address": _fmt_address(ref.getToAddress()),
                     "to_function": str(to_func.getName()) if to_func else None,
                     "type": str(ref.getReferenceType()),
                 })
@@ -225,8 +218,8 @@ def _handle_xrefs_from(ctx, args: dict) -> dict:
                 break
             to_func = fm.getFunctionContaining(ref.getToAddress())
             xrefs.append({
-                "from_address": str(ref.getFromAddress()),
-                "to_address": str(ref.getToAddress()),
+                "from_address": _fmt_address(ref.getFromAddress()),
+                "to_address": _fmt_address(ref.getToAddress()),
                 "to_function": str(to_func.getName()) if to_func else None,
                 "type": str(ref.getReferenceType()),
             })

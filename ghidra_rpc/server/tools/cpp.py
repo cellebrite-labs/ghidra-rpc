@@ -7,6 +7,7 @@ resolution in ``xrefs.py`` to turn the mechanical parts of C++ analysis
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.memory import resolve_target_name
 from ghidra_rpc.server.tools.xrefs import _resolve_address
@@ -133,14 +134,14 @@ def _handle_list_vtable(ctx, args: dict) -> dict:
         slots.append({
             "index":          i,
             "offset":         i * ptr_size,
-            "slot_address":   str(slot_addr),
-            "target_address": str(tgt) if tgt is not None else None,
+            "slot_address":   _fmt_address(slot_addr),
+            "target_address": _fmt_address(tgt) if tgt is not None else None,
             "target_name":    name,
             "target_kind":    kind,
         })
 
     return {
-        "vtable_address": str(start_addr),
+        "vtable_address": _fmt_address(start_addr),
         "symbol":         head_name,
         "count":          len(slots),
         "pointer_size":   ptr_size,
