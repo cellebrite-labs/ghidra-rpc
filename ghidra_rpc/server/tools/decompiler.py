@@ -55,7 +55,7 @@ def _find_function(pi, name_or_address: str):
             f"Ambiguous function name '{name_or_address}'. Partial matches: {suggestions}"
         )
 
-    raise ValueError(f"Function '{name_or_address}' not found. If '{name_or_address} is an address, pass it with a 0x prefix")
+    raise ValueError(f"Function '{name_or_address}' not found. If '{name_or_address}' is an address, pass it with a 0x prefix.")
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
@@ -156,6 +156,12 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
         raise ValueError("Missing required argument: binary")
     if not pattern_str:
         raise ValueError("Missing required argument: pattern")
+    # A non-positive cap searches nothing, so next_unscanned_address would
+    # echo address_min back and a resume loop would never terminate.
+    if limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+    if max_functions < 1:
+        raise ValueError(f"max_functions must be >= 1, got {max_functions}")
 
     try:
         regex = re.compile(pattern_str, re.IGNORECASE if ignore_case else 0)
@@ -176,6 +182,12 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
             address_min = _parse_address(pi.program, address_min_str)
         if address_max_str:
             address_max = _parse_address(pi.program, address_max_str)
+    # An inverted range would otherwise report complete coverage with no matches.
+    if (address_min is not None and address_max is not None
+            and address_min.compareTo(address_max) > 0):
+        raise ValueError(
+            f"address_min ({address_min_str}) is above address_max ({address_max_str})"
+        )
 
     # Start the iterator at address_min to skip functions before the range.
     if address_min is not None:

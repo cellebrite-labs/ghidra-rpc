@@ -1,7 +1,8 @@
 """Unit tests for search_decompiled's pure logic (regex matching, class_filter,
-limit/max_functions truncation) using a fully mocked Ghidra program -- no real
-Ghidra/JVM needed. Server-side handling of *actual* decompiler output is only
-exercised by tests/test_integration.py against a real headless daemon.
+limit/max_functions truncation, coverage reporting) using a fully mocked Ghidra
+program -- no real Ghidra/JVM needed. Server-side handling of *actual*
+decompiler output is only exercised by tests/test_integration.py against a
+real headless daemon.
 """
 
 from __future__ import annotations
@@ -184,3 +185,90 @@ class TestSearchDecompiled:
         assert result["functions_searched"] == 3
         assert result["truncated"] is True
         assert result["count"] == 0
+
+    def test_zero_limit_or_max_functions_rejected(self):
+        # Searching nothing would echo address_min back as
+        # next_unscanned_address, so a resume loop would never end.
+        handler = self._handler()
+        for key in ("limit", "max_functions"):
+            with pytest.raises(ValueError):
+                handler(_make_ctx(_make_pi([])),
+                        {"binary": "bin", "pattern": "x", key: 0})
+
+
+class _FakeAddress:
+    """Minimal stand-in for ghidra.program.model.address.Address."""
+
+    def __init__(self, offset):
+        self.offset = offset
+
+    def compareTo(self, other):
+        return (self.offset > other.offset) - (self.offset < other.offset)
+
+    def __str__(self):
+        return f"{self.offset:08x}"
+
+
+class TestSearchDecompiledCoverage:
+    """scanned_range / next_unscanned_address and address_min/max filtering."""
+
+    @pytest.fixture(autouse=True)
+    def fake_parse_address(self, monkeypatch):
+        import ghidra_rpc.server.context as context
+        monkeypatch.setattr(context, "_parse_address",
+                            lambda program, s: _FakeAddress(int(s, 16)))
+
+    def _handler(self):
+        from ghidra_rpc.server.tools.decompiler import _handle_search_decompiled
+        return _handle_search_decompiled
+
+    def _functions(self, n, c_code="void f(void) { no_match_here(); }"):
+        return [
+            _make_function(f"f{i}", f"f{i}", _FakeAddress(0x1000 + 0x10 * i), c_code)
+            for i in range(n)
+        ]
+
+    def test_complete_coverage(self):
+        result = self._handler()(_make_ctx(_make_pi(self._functions(3))), {
+            "binary": "bin", "pattern": "target",
+        })
+        assert result["scanned_range"] == {"min": "00001000", "max": "00001020"}
+        assert result["next_unscanned_address"] is None
+
+    def test_nothing_searched(self):
+        result = self._handler()(_make_ctx(_make_pi([])), {
+            "binary": "bin", "pattern": "target",
+        })
+        assert result["scanned_range"] is None
+        assert result["next_unscanned_address"] is None
+
+    def test_max_functions_truncation_reports_resume_point(self):
+        result = self._handler()(_make_ctx(_make_pi(self._functions(10))), {
+            "binary": "bin", "pattern": "target", "max_functions": 3,
+        })
+        assert result["scanned_range"] == {"min": "00001000", "max": "00001020"}
+        assert result["next_unscanned_address"] == "00001030"
+
+    def test_limit_truncation_reports_resume_point(self):
+        functions = self._functions(5, "void f(void) { target(); }")
+        result = self._handler()(_make_ctx(_make_pi(functions)), {
+            "binary": "bin", "pattern": "target", "limit": 2,
+        })
+        assert result["scanned_range"] == {"min": "00001000", "max": "00001010"}
+        assert result["next_unscanned_address"] == "00001020"
+
+    def test_address_range_filters_candidates(self):
+        result = self._handler()(_make_ctx(_make_pi(self._functions(10))), {
+            "binary": "bin", "pattern": "target",
+            "address_min": "0x1020", "address_max": "0x1040",
+        })
+        assert result["functions_total"] == 3
+        assert result["scanned_range"] == {"min": "00001020", "max": "00001040"}
+        assert result["next_unscanned_address"] is None
+
+    def test_inverted_address_range_rejected(self):
+        with pytest.raises(ValueError):
+            self._handler()(_make_ctx(_make_pi(self._functions(3))), {
+                "binary": "bin", "pattern": "target",
+                "address_min": "0x2000", "address_max": "0x1000",
+            })
