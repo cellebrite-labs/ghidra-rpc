@@ -118,9 +118,10 @@ def _handle_list_functions(ctx, args: dict) -> dict:
         address_max -- only return functions at or below this address
         with_body   -- if true, include body_min, body_max, body_size per function
     """
+    from ghidra_rpc.server.context import _iter_functions_in_range
+
     binary = args.get("binary", "")
     pi = ctx.get_program(binary)
-    fm = pi.program.getFunctionManager()
 
     include_externals = args.get("include_externals", False)
     offset = int(args.get("offset", 0))
@@ -132,39 +133,12 @@ def _handle_list_functions(ctx, args: dict) -> dict:
     address_max_str = args.get("address_max", "")
     with_body       = bool(args.get("with_body", False))
 
-    address_min = None
-    address_max = None
-    if address_min_str or address_max_str:
-        from ghidra_rpc.server.context import _parse_address
-        if address_min_str:
-            address_min = _parse_address(pi.program, address_min_str)
-        if address_max_str:
-            address_max = _parse_address(pi.program, address_max_str)
-
-    # Start the iterator at address_min for performance (skip functions before the range).
-    if address_min is not None:
-        func_iter = fm.getFunctions(address_min, True)
-    else:
-        func_iter = fm.getFunctions(True)
-
     functions = []
-    for func in func_iter:
+    for func in _iter_functions_in_range(pi.program, address_min_str, address_max_str):
         if not include_externals and (func.isExternal() or func.isThunk()):
             continue
 
         entry = func.getEntryPoint()
-
-        if address_min is not None or address_max is not None:
-            try:
-                if address_min is not None and entry.compareTo(address_min) < 0:
-                    continue
-                if address_max is not None and entry.compareTo(address_max) > 0:
-                    # Functions are iterated in address order; nothing further in range.
-                    break
-            except Exception:
-                # Address comparison failed (different address spaces) — skip.
-                continue
-
         item = {
             "name":      str(func.getName()),
             "address":   str(entry),

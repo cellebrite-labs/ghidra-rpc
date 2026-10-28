@@ -168,48 +168,17 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
     except re.error as e:
         raise ValueError(f"Invalid regex pattern: {e}")
 
+    from ghidra_rpc.server.context import _iter_functions_in_range
+
     pi = ctx.get_program(binary)
-    fm = pi.program.getFunctionManager()
     class_filter_lower = class_filter.lower() if class_filter else None
 
-    address_min_str = args.get("address_min", "")
-    address_max_str = args.get("address_max", "")
-    address_min = None
-    address_max = None
-    if address_min_str or address_max_str:
-        from ghidra_rpc.server.context import _parse_address
-        if address_min_str:
-            address_min = _parse_address(pi.program, address_min_str)
-        if address_max_str:
-            address_max = _parse_address(pi.program, address_max_str)
-    # An inverted range would otherwise report complete coverage with no matches.
-    if (address_min is not None and address_max is not None
-            and address_min.compareTo(address_max) > 0):
-        raise ValueError(
-            f"address_min ({address_min_str}) is above address_max ({address_max_str})"
-        )
-
-    # Start the iterator at address_min to skip functions before the range.
-    if address_min is not None:
-        func_iter = fm.getFunctions(address_min, True)
-    else:
-        func_iter = fm.getFunctions(True)
-
     candidates = []
-    for func in func_iter:
+    for func in _iter_functions_in_range(pi.program,
+                                         args.get("address_min", ""),
+                                         args.get("address_max", "")):
         if func.isExternal() or func.isThunk():
             continue
-        if address_min is not None or address_max is not None:
-            entry = func.getEntryPoint()
-            try:
-                if address_min is not None and entry.compareTo(address_min) < 0:
-                    continue
-                if address_max is not None and entry.compareTo(address_max) > 0:
-                    # Functions are iterated in address order; nothing further in range.
-                    break
-            except Exception:
-                # Address comparison failed (different address spaces) — skip.
-                continue
         qualified_name = str(func.getSymbol().getName(True))
         if class_filter_lower and class_filter_lower not in qualified_name.lower():
             continue

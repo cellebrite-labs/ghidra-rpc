@@ -832,3 +832,40 @@ def _parse_address(program, address: str):
     if addr is None:
         raise ValueError(f"Invalid address: {address}")
     return addr
+
+
+def _iter_functions_in_range(program, address_min_str: str = "", address_max_str: str = ""):
+    """Yield the program's functions in entry-point order, restricted to
+    [address_min, address_max] (either bound optional, inclusive).
+
+    Raises ValueError if a bound doesn't parse or address_min > address_max —
+    an inverted range would otherwise silently yield nothing.
+    """
+    address_min = _parse_address(program, address_min_str) if address_min_str else None
+    address_max = _parse_address(program, address_max_str) if address_max_str else None
+    if (address_min is not None and address_max is not None
+            and address_min.compareTo(address_max) > 0):
+        raise ValueError(
+            f"address_min ({address_min_str}) is above address_max ({address_max_str})"
+        )
+
+    fm = program.getFunctionManager()
+    # Start the iterator at address_min to skip functions before the range.
+    if address_min is not None:
+        func_iter = fm.getFunctions(address_min, True)
+    else:
+        func_iter = fm.getFunctions(True)
+
+    for func in func_iter:
+        if address_min is not None or address_max is not None:
+            entry = func.getEntryPoint()
+            try:
+                if address_min is not None and entry.compareTo(address_min) < 0:
+                    continue
+                if address_max is not None and entry.compareTo(address_max) > 0:
+                    # Functions are iterated in address order; nothing further in range.
+                    return
+            except Exception:
+                # Address comparison failed (different address spaces) — skip.
+                continue
+        yield func

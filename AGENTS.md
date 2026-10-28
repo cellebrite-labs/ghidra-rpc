@@ -56,7 +56,9 @@ ghidra-rpc/
 │       ├── launcher.py   — Ghidra init (headless & GUI), macOS framework Python re-exec
 │       ├── _gui_launcher.py — GUI launcher (adapted from pyghidra-mcp)
 │       ├── context.py    — HeadlessContext, GuiContext, DecompilerPool, ProgramInfo,
-│       │                   _run_analysis() (supports timeout + best-effort cancel)
+│       │                   _run_analysis() (supports timeout + best-effort cancel),
+│       │                   _parse_address(), _iter_functions_in_range() (shared
+│       │                   address_min/max filter for functions + search_decompiled)
 │       └── tools/        — Command handlers (one module per domain)
 │           ├── __init__.py     — register_all_tools()
 │           ├── analysis.py     — load (analyze=, analysis_timeout=), list_binaries,
@@ -129,8 +131,9 @@ ghidra-rpc/
     │                              JSON-usage-error contract in main(), set-comment's
     │                              --comment option, list-bookmarks --category
     ├── test_search_decompiled.py — search_decompiled handler logic (regex matching,
-    │                              class_filter, limit/max_functions truncation) against
-    │                              a fully mocked program; no Ghidra needed
+    │                              class_filter, limit/max_functions truncation,
+    │                              scanned_range/next_unscanned_address, address
+    │                              range) against a fully mocked program; no Ghidra needed
     ├── test_gui_context.py      — GuiContext._project_matches / _normalize_project_location
     │                              against a fake ProjectLocator (no Ghidra needed); regression
     │                              coverage for the Windows drive-letter path bug (gotcha 12)

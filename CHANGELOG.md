@@ -32,8 +32,9 @@
 
 - Function lookups that find nothing now suggest passing addresses with a `0x`
   prefix, and ambiguous-name suggestions print entry addresses as `0x...`.
-- `search-decompiled` rejects `--limit`/`--max-scan` below 1 and an
-  `--address-min` above `--address-max`.
+- `search-decompiled` rejects `--limit`/`--max-scan` below 1.
+- `functions` and `search-decompiled` reject an `--address-min` above
+  `--address-max` instead of returning an empty result.
 - **Breaking:** `disassemble` no longer returns the `instructions` array by
   default — it was a verbatim duplicate of the `listing` string, which already
   carries every field it did (address, bytes, mnemonic, operands, EOL comment;
