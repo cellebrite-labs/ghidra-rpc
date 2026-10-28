@@ -585,7 +585,7 @@ class TestDecompilerAndDisassembly:
         """Decompile should also work when target is given as a hex address."""
         result = rpc(daemon["sock"], "decompile",
                      {"binary": daemon["short_name"],
-                      "func": "0x" + daemon["main_addr"], "timeout": 60})["result"]
+                      "func": daemon["main_addr"], "timeout": 60})["result"]
         assert "c_code" in result
         assert len(result["c_code"]) > 20
 
@@ -615,7 +615,7 @@ class TestDecompilerAndDisassembly:
         # Default: instructions array is hidden, listing string is present
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
-                      "address": "0x" + daemon["main_addr"], "count": 10})["result"]
+                      "address": daemon["main_addr"], "count": 10})["result"]
         assert "listing" in result
         assert "instructions" not in result
         assert result["count"] > 0
@@ -624,7 +624,7 @@ class TestDecompilerAndDisassembly:
         # listing is byte-identical to the default response.
         result_verbose = rpc(daemon["sock"], "disassemble",
                              {"binary": daemon["short_name"],
-                              "address": "0x" + daemon["main_addr"],
+                              "address": daemon["main_addr"],
                               "count": 10,
                               "with_instructions": True})["result"]
         assert result_verbose["listing"] == result["listing"]
@@ -638,7 +638,7 @@ class TestDecompilerAndDisassembly:
         """Default 20-instruction listing must return count up to 20."""
         result = rpc(daemon["sock"], "disassemble",
                      {"binary": daemon["short_name"],
-                      "address": "0x" + daemon["main_addr"]})["result"]
+                      "address": daemon["main_addr"]})["result"]
         assert 0 < result["count"] <= 20
         assert "listing" in result
 
@@ -716,7 +716,7 @@ class TestMemory:
     def test_read_bytes_at_main(self, daemon):
         result = rpc(daemon["sock"], "read_bytes",
                      {"binary": daemon["short_name"],
-                      "address": "0x" + daemon["main_addr"], "length": 16})["result"]
+                      "address": daemon["main_addr"], "length": 16})["result"]
         assert "hex" in result
         hex_val = result["hex"].replace(" ", "")
         # 16 bytes = 32 hex chars
@@ -729,7 +729,7 @@ class TestMemory:
         for length in (1, 4, 8, 32):
             result = rpc(daemon["sock"], "read_bytes",
                          {"binary": daemon["short_name"],
-                          "address": "0x" + daemon["main_addr"], "length": length})["result"]
+                          "address": daemon["main_addr"], "length": length})["result"]
             hex_val = result["hex"].replace(" ", "")
             assert len(hex_val) == length * 2, (
                 f"length={length}: expected {length*2} hex chars, got {len(hex_val)}"
@@ -826,7 +826,7 @@ class TestXrefs:
         """xrefs_to should also accept a hex address as target."""
         result = rpc(daemon["sock"], "xrefs_to",
                      {"binary": daemon["short_name"],
-                      "target": "0x" + daemon["main_addr"], "limit": 10})["result"]
+                      "target": daemon["main_addr"], "limit": 10})["result"]
         # Just verify the response has the right shape (main may or may not
         # have incoming refs depending on how the binary is built)
         assert "xrefs" in result
@@ -929,7 +929,7 @@ class TestBookmarks:
 
     def test_set_and_list_bookmark(self, daemon):
         uid = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         category = f"test-{uid}"
         comment  = f"integration-test bookmark {uid}"
 
@@ -962,7 +962,7 @@ class TestBookmarks:
 
     def test_list_bookmarks_by_address(self, daemon):
         uid = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         category = f"addr-test-{uid}"
 
         rpc(daemon["sock"], "set_bookmark", {
@@ -986,7 +986,7 @@ class TestBookmarks:
 
     def test_list_bookmarks_by_type(self, daemon):
         uid = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         category = f"type-test-{uid}"
 
         rpc(daemon["sock"], "set_bookmark", {
@@ -1008,7 +1008,7 @@ class TestBookmarks:
 
     def test_list_bookmarks_by_category(self, daemon):
         uid = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         category = f"category-filter-test-{uid}"
 
         rpc(daemon["sock"], "set_bookmark", {
@@ -1047,7 +1047,7 @@ class TestBookmarks:
 
     def test_remove_bookmark_removes_it(self, daemon):
         uid = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         category = f"remove-test-{uid}"
 
         rpc(daemon["sock"], "set_bookmark", {
@@ -1077,7 +1077,7 @@ class TestCommentsAndLabels:
     """
 
     def test_set_eol_comment(self, daemon):
-        addr    = "0x" + daemon["main_addr"]
+        addr    = daemon["main_addr"]
         uid     = uuid.uuid4().hex[:8]
         comment = f"eol-comment-{uid}"
 
@@ -1104,7 +1104,7 @@ class TestCommentsAndLabels:
 
     def test_set_plate_comment(self, daemon):
         """Plate comments annotate a function header."""
-        addr    = "0x" + daemon["main_addr"]
+        addr    = daemon["main_addr"]
         uid     = uuid.uuid4().hex[:8]
         comment = f"plate-comment-{uid}"
 
@@ -1121,7 +1121,7 @@ class TestCommentsAndLabels:
 
     def test_create_label(self, daemon):
         uid  = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         name = f"_test_label_{uid}"
 
         result = rpc(daemon["sock"], "create_label", {
@@ -1160,7 +1160,7 @@ class TestCommentsAndLabels:
         ``string_data::`` labels. A query copied verbatim from `strings`
         output -- with real spaces -- must still match such labels."""
         uid  = uuid.uuid4().hex[:8]
-        addr = "0x" + daemon["main_addr"]
+        addr = daemon["main_addr"]
         name = f"space_norm_{uid}_two_words"
 
         result = rpc(daemon["sock"], "create_label", {
@@ -1213,7 +1213,7 @@ class TestRenameFunction:
 
         rpc(daemon["sock"], "rename_function", {
             "binary":   daemon["short_name"],
-            "target":   "0x" + addr,
+            "target":   addr,
             "new_name": new_name,
         })
 
@@ -1228,7 +1228,7 @@ class TestRenameFunction:
         # Cleanup: rename back to original
         rpc(daemon["sock"], "rename_function", {
             "binary":   daemon["short_name"],
-            "target":   "0x" + addr,
+            "target":   addr,
             "new_name": orig_name,
         })
 
@@ -1239,7 +1239,7 @@ class TestRenameFunction:
 
         result = rpc(daemon["sock"], "rename_function", {
             "binary":   daemon["short_name"],
-            "target":   "0x" + addr,
+            "target":   addr,
             "new_name": new_name,
         })["result"]
 
@@ -1250,7 +1250,7 @@ class TestRenameFunction:
         # Cleanup
         rpc(daemon["sock"], "rename_function", {
             "binary":   daemon["short_name"],
-            "target":   "0x" + addr,
+            "target":   addr,
             "new_name": orig_name,
         })
 
@@ -2247,6 +2247,55 @@ class TestBatchEditVariable:
 
 # ── Memory-block helper ─────────────────────────────────────────────────────
 
+class TestAddressFormat:
+    """Every address the daemon emits is 0x-prefixed and accepted back as-is."""
+
+    def test_output_addresses_are_0x_prefixed(self, daemon):
+        b = daemon["short_name"]
+        funcs = rpc(daemon["sock"], "functions",
+                    {"binary": b, "with_body": True})["result"]["functions"]
+        xrefs = rpc(daemon["sock"], "xrefs_from",
+                    {"binary": b, "target": daemon["main_name"], "limit": 10})["result"]["xrefs"]
+        segs = rpc(daemon["sock"], "memory_map", {"binary": b})["result"]["segments"]
+        meta = rpc(daemon["sock"], "metadata", {"binary": b})["result"]
+        emitted = (
+            [f[k] for f in funcs for k in ("address", "body_min", "body_max")]
+            + [x[k] for x in xrefs for k in ("from_address", "to_address")
+               if not x[k].startswith("Stack[")]
+            + [s[k] for s in segs for k in ("start", "end")]
+            + [meta["base_address"]]
+        )
+        bad = [a for a in emitted if "0x" not in a]
+        assert not bad, f"addresses missing 0x prefix: {bad[:10]}"
+
+    def test_function_addresses_round_trip_through_decompile(self, daemon):
+        b = daemon["short_name"]
+        local = [f for f in daemon["all_funcs"] if f["address"].startswith("0x")]
+        for f in local[:5]:
+            result = rpc(daemon["sock"], "decompile",
+                         {"binary": b, "func": f["address"], "timeout": 60})["result"]
+            assert result["address"] == f["address"], (f, result["address"])
+
+    def test_xref_address_round_trips_through_disassemble(self, daemon):
+        b = daemon["short_name"]
+        xref = rpc(daemon["sock"], "xrefs_from",
+                   {"binary": b, "target": daemon["main_name"], "limit": 1})["result"]["xrefs"][0]
+        result = rpc(daemon["sock"], "disassemble",
+                     {"binary": b, "address": xref["from_address"], "count": 1})["result"]
+        assert result["address"] == xref["from_address"]
+        assert result["listing"].startswith(xref["from_address"])
+
+    def test_bare_hex_does_not_resolve_to_fun_name(self, daemon):
+        """Bare hex is a name query; it must not partial-match FUN_<hex>."""
+        from ghidra_rpc.client import DaemonError, send_request
+        fun = next((f for f in daemon["all_funcs"] if f["name"].startswith("FUN_")), None)
+        if fun is None:
+            pytest.skip("no auto-named FUN_ function in testapp")
+        with pytest.raises(DaemonError, match="0x prefix"):
+            send_request(daemon["sock"], "decompile",
+                         {"binary": daemon["short_name"], "func": fun["name"][4:]})
+
+
 def _find_block(daemon, name):
     """Return the memory_map segment dict named *name*, or skip if absent."""
     segs = rpc(daemon["sock"], "memory_map",
@@ -2346,14 +2395,14 @@ class TestListVtable:
         slot = next((p for p in pointers if p["target_kind"] == "function"), None)
         if slot is None:
             pytest.skip("no function pointer found in .got.plt")
-        return f"0x{slot['slot_address']}"
+        return slot["slot_address"]
 
     def test_list_vtable_count_path(self, daemon):
         """With --count, read exactly N slots and stop with reason 'count'."""
         blk = _find_block(daemon, ".got.plt")
         n = blk["size"] // 8
         result = rpc(daemon["sock"], "list_vtable", {
-            "binary": daemon["short_name"], "address": f"0x{blk['start']}",
+            "binary": daemon["short_name"], "address": blk["start"],
             "count": n,
         })["result"]
 

@@ -30,6 +30,30 @@ def fake_ghidra_util_task(monkeypatch):
     monkeypatch.setitem(sys.modules, "ghidra.util.task", fake_task)
 
 
+class _FakeAddressSpace:
+    def isStackSpace(self):
+        return False
+
+
+class _FakeAddress:
+    """Minimal stand-in for ghidra.program.model.address.Address."""
+
+    def __init__(self, offset):
+        self.offset = offset
+
+    def compareTo(self, other):
+        return (self.offset > other.offset) - (self.offset < other.offset)
+
+    def getAddressSpace(self):
+        return _FakeAddressSpace()
+
+    def toString(self, show_space):
+        return f"{self.offset:08x}"
+
+    def __str__(self):
+        return f"{self.offset:08x}"
+
+
 def _make_function(name, qualified_name, address, c_code,
                     external=False, thunk=False):
     func = MagicMock()
@@ -96,9 +120,9 @@ class TestSearchDecompiled:
 
     def test_matches_across_functions_case_insensitive_by_default(self):
         functions = [
-            _make_function("f1", "f1", "0x1000", "void f1(void) { do_thing(); }"),
-            _make_function("f2", "f2", "0x2000", "void f2(void) { OTHER(); }"),
-            _make_function("f3", "f3", "0x3000", "void f3(void) { nothing_here(); }"),
+            _make_function("f1", "f1", _FakeAddress(0x1000), "void f1(void) { do_thing(); }"),
+            _make_function("f2", "f2", _FakeAddress(0x2000), "void f2(void) { OTHER(); }"),
+            _make_function("f3", "f3", _FakeAddress(0x3000), "void f3(void) { nothing_here(); }"),
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "do_thing|other",
@@ -112,7 +136,7 @@ class TestSearchDecompiled:
 
     def test_matching_lines_include_line_numbers(self):
         c_code = "void f(void)\n{\n  target_call();\n}\n"
-        functions = [_make_function("f", "f", "0x1000", c_code)]
+        functions = [_make_function("f", "f", _FakeAddress(0x1000), c_code)]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "target_call",
         })
@@ -121,7 +145,7 @@ class TestSearchDecompiled:
         ]
 
     def test_case_sensitive_when_ignore_case_false(self):
-        functions = [_make_function("f", "f", "0x1000", "void f(void) { NEEDLE(); }")]
+        functions = [_make_function("f", "f", _FakeAddress(0x1000), "void f(void) { NEEDLE(); }")]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "needle", "ignore_case": False,
         })
@@ -129,8 +153,8 @@ class TestSearchDecompiled:
 
     def test_class_filter_scopes_to_qualified_name_substring(self):
         functions = [
-            _make_function("bar", "com::foo::Bar::bar", "0x1000", "void bar(void) { target(); }"),
-            _make_function("baz", "com::other::Baz::baz", "0x2000", "void baz(void) { target(); }"),
+            _make_function("bar", "com::foo::Bar::bar", _FakeAddress(0x1000), "void bar(void) { target(); }"),
+            _make_function("baz", "com::other::Baz::baz", _FakeAddress(0x2000), "void baz(void) { target(); }"),
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "target", "class_filter": "com::foo",
@@ -140,9 +164,9 @@ class TestSearchDecompiled:
 
     def test_external_and_thunk_functions_are_skipped(self):
         functions = [
-            _make_function("ext", "ext", "0x1000", "void ext(void) { target(); }", external=True),
-            _make_function("thunk", "thunk", "0x2000", "void thunk(void) { target(); }", thunk=True),
-            _make_function("real", "real", "0x3000", "void real(void) { target(); }"),
+            _make_function("ext", "ext", _FakeAddress(0x1000), "void ext(void) { target(); }", external=True),
+            _make_function("thunk", "thunk", _FakeAddress(0x2000), "void thunk(void) { target(); }", thunk=True),
+            _make_function("real", "real", _FakeAddress(0x3000), "void real(void) { target(); }"),
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "target",
@@ -152,8 +176,8 @@ class TestSearchDecompiled:
 
     def test_decompile_failure_is_skipped_not_fatal(self):
         functions = [
-            _make_function("bad", "bad", "0x1000", None),  # simulates decompile failure
-            _make_function("good", "good", "0x2000", "void good(void) { target(); }"),
+            _make_function("bad", "bad", _FakeAddress(0x1000), None),  # simulates decompile failure
+            _make_function("good", "good", _FakeAddress(0x2000), "void good(void) { target(); }"),
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "target",
@@ -164,7 +188,7 @@ class TestSearchDecompiled:
 
     def test_limit_truncates_and_sets_truncated_flag(self):
         functions = [
-            _make_function(f"f{i}", f"f{i}", hex(i), "void f(void) { target(); }")
+            _make_function(f"f{i}", f"f{i}", _FakeAddress(i), "void f(void) { target(); }")
             for i in range(5)
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
@@ -176,7 +200,7 @@ class TestSearchDecompiled:
 
     def test_max_functions_caps_sweep_and_sets_truncated_flag(self):
         functions = [
-            _make_function(f"f{i}", f"f{i}", hex(i), "void f(void) { no_match_here(); }")
+            _make_function(f"f{i}", f"f{i}", _FakeAddress(i), "void f(void) { no_match_here(); }")
             for i in range(10)
         ]
         result = self._handler()(_make_ctx(_make_pi(functions)), {
@@ -194,19 +218,6 @@ class TestSearchDecompiled:
             with pytest.raises(ValueError):
                 handler(_make_ctx(_make_pi([])),
                         {"binary": "bin", "pattern": "x", key: 0})
-
-
-class _FakeAddress:
-    """Minimal stand-in for ghidra.program.model.address.Address."""
-
-    def __init__(self, offset):
-        self.offset = offset
-
-    def compareTo(self, other):
-        return (self.offset > other.offset) - (self.offset < other.offset)
-
-    def __str__(self):
-        return f"{self.offset:08x}"
 
 
 class TestSearchDecompiledCoverage:
@@ -232,7 +243,7 @@ class TestSearchDecompiledCoverage:
         result = self._handler()(_make_ctx(_make_pi(self._functions(3))), {
             "binary": "bin", "pattern": "target",
         })
-        assert result["scanned_range"] == {"min": "00001000", "max": "00001020"}
+        assert result["scanned_range"] == {"min": "0x00001000", "max": "0x00001020"}
         assert result["next_unscanned_address"] is None
 
     def test_nothing_searched(self):
@@ -246,16 +257,16 @@ class TestSearchDecompiledCoverage:
         result = self._handler()(_make_ctx(_make_pi(self._functions(10))), {
             "binary": "bin", "pattern": "target", "max_functions": 3,
         })
-        assert result["scanned_range"] == {"min": "00001000", "max": "00001020"}
-        assert result["next_unscanned_address"] == "00001030"
+        assert result["scanned_range"] == {"min": "0x00001000", "max": "0x00001020"}
+        assert result["next_unscanned_address"] == "0x00001030"
 
     def test_limit_truncation_reports_resume_point(self):
         functions = self._functions(5, "void f(void) { target(); }")
         result = self._handler()(_make_ctx(_make_pi(functions)), {
             "binary": "bin", "pattern": "target", "limit": 2,
         })
-        assert result["scanned_range"] == {"min": "00001000", "max": "00001010"}
-        assert result["next_unscanned_address"] == "00001020"
+        assert result["scanned_range"] == {"min": "0x00001000", "max": "0x00001010"}
+        assert result["next_unscanned_address"] == "0x00001020"
 
     def test_address_range_filters_candidates(self):
         result = self._handler()(_make_ctx(_make_pi(self._functions(10))), {
@@ -263,7 +274,7 @@ class TestSearchDecompiledCoverage:
             "address_min": "0x1020", "address_max": "0x1040",
         })
         assert result["functions_total"] == 3
-        assert result["scanned_range"] == {"min": "00001020", "max": "00001040"}
+        assert result["scanned_range"] == {"min": "0x00001020", "max": "0x00001040"}
         assert result["next_unscanned_address"] is None
 
     def test_inverted_address_range_rejected(self):

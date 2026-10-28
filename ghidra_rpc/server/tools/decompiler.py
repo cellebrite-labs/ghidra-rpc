@@ -2,33 +2,35 @@
 
 from __future__ import annotations
 
+import re
+
+from ghidra_rpc.server.context import _fmt_address, _looks_like_address, _parse_address
 from ghidra_rpc.server.main import register_handler
 
 
 def _find_function(pi, name_or_address: str):
-    """Resolve a function by name or hex address. Raises ValueError if not found or ambiguous."""
+    """Resolve a function by name or hex address. Raises ValueError if not found or ambiguous.
+
+    Only 0x-prefixed input (optionally space-qualified, as _fmt_address emits
+    it) is treated as an address.  Bare hex is a name query, but never
+    partial-matches auto-generated names like FUN_00101139 — that would
+    silently pick whichever FUN_ happens to contain the digits.
+    """
     prog = pi.program
     fm = prog.getFunctionManager()
-    af = prog.getAddressFactory()
 
-    # Try as address first
-    if name_or_address.startswith("0x") or name_or_address.startswith("0X"):
-        addr_str = name_or_address[2:]
-        try:
-            addr = af.getAddress(addr_str)
-            if addr:
-                func = fm.getFunctionAt(addr)
-                if func:
-                    return func
-                # Maybe it's inside a function
-                func = fm.getFunctionContaining(addr)
-                if func:
-                    return func
-        except Exception:
-            pass
+    if _looks_like_address(name_or_address):
+        addr = _parse_address(prog, name_or_address)
+        func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
+        if func:
+            return func
+        raise ValueError(f"No function at or containing address {name_or_address}")
+
+    from ghidra.program.model.symbol import SourceType
 
     # Try as exact name
     name_lower = name_or_address.lower()
+    bare_hex = bool(re.fullmatch(r"[0-9a-f]+", name_lower))
     exact_matches = []
     partial_matches = []
 
@@ -37,12 +39,14 @@ def _find_function(pi, name_or_address: str):
         if func_name.lower() == name_lower:
             exact_matches.append(func)
         elif name_lower in func_name.lower():
+            if bare_hex and func.getSymbol().getSource() == SourceType.DEFAULT:
+                continue
             partial_matches.append(func)
 
     if len(exact_matches) == 1:
         return exact_matches[0]
     elif len(exact_matches) > 1:
-        suggestions = [f"{f.getName()} @ 0x{f.getEntryPoint()}" for f in exact_matches]
+        suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in exact_matches]
         raise ValueError(
             f"Ambiguous function name '{name_or_address}'. Matches: {suggestions}"
         )
@@ -50,7 +54,7 @@ def _find_function(pi, name_or_address: str):
     if len(partial_matches) == 1:
         return partial_matches[0]
     elif len(partial_matches) > 1:
-        suggestions = [f"{f.getName()} @ 0x{f.getEntryPoint()}" for f in partial_matches[:10]]
+        suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in partial_matches[:10]]
         raise ValueError(
             f"Ambiguous function name '{name_or_address}'. Partial matches: {suggestions}"
         )
@@ -79,7 +83,7 @@ def _handle_decompile(ctx, args: dict) -> dict:
     if error_msg and error_msg.strip():
         return {
             "name": str(func.getName()),
-            "address": str(func.getEntryPoint()),
+            "address": _fmt_address(func.getEntryPoint()),
             "c_code": None,
             "error": error_msg,
         }
@@ -89,7 +93,7 @@ def _handle_decompile(ctx, args: dict) -> dict:
 
     return {
         "name": str(func.getName()),
-        "address": str(func.getEntryPoint()),
+        "address": _fmt_address(func.getEntryPoint()),
         "signature": str(decompiled.getSignature()) if decompiled else str(func.getSignature()),
         "c_code": c_code,
     }
@@ -140,7 +144,6 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
                                    searched (pass it back as address_min to
                                    resume), or None if coverage is complete
     """
-    import re
 
     from ghidra.util.task import TaskMonitor
 
@@ -213,19 +216,19 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
         if matching_lines:
             matches.append({
                 "function": qualified_name,
-                "address": str(func.getEntryPoint()),
+                "address": _fmt_address(func.getEntryPoint()),
                 "matching_lines": matching_lines,
             })
 
     scanned_range = None
     if functions_searched:
         scanned_range = {
-            "min": str(candidates[0][0].getEntryPoint()),
-            "max": str(candidates[functions_searched - 1][0].getEntryPoint()),
+            "min": _fmt_address(candidates[0][0].getEntryPoint()),
+            "max": _fmt_address(candidates[functions_searched - 1][0].getEntryPoint()),
         }
     next_unscanned_address = None
     if functions_searched < total:
-        next_unscanned_address = str(candidates[functions_searched][0].getEntryPoint())
+        next_unscanned_address = _fmt_address(candidates[functions_searched][0].getEntryPoint())
 
     return {
         "matches": matches,

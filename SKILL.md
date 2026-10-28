@@ -108,6 +108,12 @@ session only (daemon stopped), and `null` if no session exists.
 `<func>` can be a function name or hex address (e.g., `main` or `0x401000`). If the name
 is ambiguous, the error message lists matches so you can use the address instead.
 
+**Addresses.** Every address in command output is `0x`-prefixed (`0x00101139`;
+non-default spaces keep their qualifier: `EXTERNAL:0x00000001`, overlays `ov1::0x00001000`;
+stack offsets stay `Stack[-0x10]`). Pass them back verbatim. Only `0x`-prefixed input is
+treated as an address — bare hex like `00101139` is a name query and will not match
+auto-named `FUN_00101139`.
+
 `search-decompiled` is especially useful on multidex Android projects, where `xrefs-to`
 on a method only sees callers within the same DEX program (see the Android APK/DEX
 section) — use it in place of a symbols+decompile+grep loop, e.g. `search-decompiled

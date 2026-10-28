@@ -8,6 +8,7 @@ Ghidra's intermediate representation:
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.decompiler import _find_function
 
@@ -85,7 +86,7 @@ def _handle_basic_blocks(ctx, args: dict) -> dict:
             dest_block = ref.getDestinationBlock()
             flow_type = ref.getFlowType()
             edge = {
-                "address": str(dest_block.getMinAddress()),
+                "address": _fmt_address(dest_block.getMinAddress()),
                 "type":    str(flow_type),
             }
             successors.append(edge)
@@ -97,11 +98,11 @@ def _handle_basic_blocks(ctx, args: dict) -> dict:
         while src_iter.hasNext():
             ref = src_iter.next()
             src_block = ref.getSourceBlock()
-            predecessors.append(str(src_block.getMinAddress()))
+            predecessors.append(_fmt_address(src_block.getMinAddress()))
 
         blocks.append({
-            "start":        str(start),
-            "end":          str(end),
+            "start":        _fmt_address(start),
+            "end":          _fmt_address(end),
             "size":         int(cb.getNumAddresses()),
             "instructions": instr_count,
             "successors":   successors,
@@ -113,7 +114,7 @@ def _handle_basic_blocks(ctx, args: dict) -> dict:
 
     return {
         "name":       str(func.getName()),
-        "address":    str(func.getEntryPoint()),
+        "address":    _fmt_address(func.getEntryPoint()),
         "blocks":     blocks,
         "num_blocks": len(blocks),
         "edges":      total_edges,
@@ -174,7 +175,7 @@ def _format_varnode(vn) -> dict | None:
         return None
     result = {
         "space": str(vn.getAddress().getAddressSpace().getName()),
-        "offset": str(vn.getAddress()),
+        "offset": _fmt_address(vn.getAddress()),
         "size": vn.getSize(),
     }
     return result
@@ -185,7 +186,7 @@ def _format_high_varnode(vn) -> dict | None:
     if vn is None:
         return None
     result = {
-        "offset": str(vn.getAddress()),
+        "offset": _fmt_address(vn.getAddress()),
         "size":   vn.getSize(),
     }
     high = vn.getHigh()
@@ -213,7 +214,7 @@ def _get_raw_pcode(pi, func, limit: int) -> dict:
                 truncated = True
                 break
             entry = {
-                "address": str(instr.getAddress()),
+                "address": _fmt_address(instr.getAddress()),
                 "seq":     i,
                 "opcode":  str(op.getMnemonic()),
                 "output":  _format_varnode(op.getOutput()),
@@ -225,7 +226,7 @@ def _get_raw_pcode(pi, func, limit: int) -> dict:
 
     return {
         "name":      str(func.getName()),
-        "address":   str(func.getEntryPoint()),
+        "address":   _fmt_address(func.getEntryPoint()),
         "mode":      "raw",
         "ops":       ops,
         "count":     len(ops),
@@ -270,7 +271,7 @@ def _get_high_pcode(pi, func, timeout: int, limit: int) -> dict:
         }
         # Include the address of the corresponding machine instruction
         try:
-            entry["address"] = str(op.getSeqnum().getTarget())
+            entry["address"] = _fmt_address(op.getSeqnum().getTarget())
         except Exception:
             pass
         ops.append(entry)
@@ -278,7 +279,7 @@ def _get_high_pcode(pi, func, timeout: int, limit: int) -> dict:
 
     return {
         "name":      str(func.getName()),
-        "address":   str(func.getEntryPoint()),
+        "address":   _fmt_address(func.getEntryPoint()),
         "mode":      "high",
         "ops":       ops,
         "count":     len(ops),

@@ -14,6 +14,7 @@ function at the correct (even) entry address.
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 
@@ -96,7 +97,7 @@ def _handle_get_processor_context(ctx, args: dict) -> dict:
             registers[str(reg.getName())] = val
 
     return {
-        "address":   str(addr),
+        "address":   _fmt_address(addr),
         "registers": registers,
     }
 
@@ -187,8 +188,8 @@ def _handle_set_processor_context(ctx, args: dict) -> dict:
                 pass
 
         return {
-            "address":  str(addr),
-            "end":      str(end_addr),
+            "address":  _fmt_address(addr),
+            "end":      _fmt_address(end_addr),
             "register": register_name,
             "value":    int_value,
             "verified": actual == int_value,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 
@@ -141,13 +142,13 @@ def _handle_list_functions(ctx, args: dict) -> dict:
         entry = func.getEntryPoint()
         item = {
             "name":      str(func.getName()),
-            "address":   str(entry),
+            "address":   _fmt_address(entry),
             "signature": str(func.getSignature()),
         }
         if with_body:
             body = func.getBody()
-            item["body_min"]  = str(body.getMinAddress())
-            item["body_max"]  = str(body.getMaxAddress())
+            item["body_min"]  = _fmt_address(body.getMinAddress())
+            item["body_max"]  = _fmt_address(body.getMaxAddress())
             item["body_size"] = int(body.getNumAddresses())
 
         functions.append(item)
@@ -175,7 +176,7 @@ def _handle_list_imports(ctx, args: dict) -> dict:
     for sym in st.getExternalSymbols():
         imports.append({
             "name": str(sym.getName()),
-            "address": str(sym.getAddress()),
+            "address": _fmt_address(sym.getAddress()),
             "library": str(sym.getParentNamespace()),
         })
     return {"imports": imports, "count": len(imports)}
@@ -192,7 +193,7 @@ def _handle_list_exports(ctx, args: dict) -> dict:
         if sym.isExternalEntryPoint():
             exports.append({
                 "name": str(sym.getName()),
-                "address": str(sym.getAddress()),
+                "address": _fmt_address(sym.getAddress()),
             })
     return {"exports": exports, "count": len(exports)}
 
@@ -213,7 +214,7 @@ def _handle_binary_metadata(ctx, args: dict) -> dict:
         "endian": str(language.getLanguageDescription().getEndian()),
         "format": str(prog.getExecutableFormat()),
         "compiler": str(compiler_spec.getCompilerSpecID()),
-        "base_address": str(prog.getImageBase()),
+        "base_address": _fmt_address(prog.getImageBase()),
         "num_functions": prog.getFunctionManager().getFunctionCount(),
     }
 
@@ -329,7 +330,7 @@ def _format_relocation(r) -> dict:
         pass
 
     return {
-        "address": str(r.getAddress()),
+        "address": _fmt_address(r.getAddress()),
         "type":    int(r.getType()),
         "symbol":  sym_name,
         "bytes":   orig_bytes,

@@ -30,6 +30,15 @@
 
 ### Changed
 
+- **Breaking:** every address in command output is now `0x`-prefixed
+  (`0x00101139`; space-qualified as `EXTERNAL:0x00000001` /
+  `ov1::0x00001000`; stack offsets unchanged as `Stack[-0x10]`), so output
+  addresses can be passed back to any command as-is. Includes the
+  `read-bytes` hexdump and `disassemble` listing address columns.
+- **Breaking:** a bare-hex function target (e.g. `00101139`) no longer
+  partial-matches auto-generated names like `FUN_00101139`; pass `0x00101139`.
+  A `0x` target with no function at or containing it now errors instead of
+  falling back to name matching.
 - Function lookups that find nothing now suggest passing addresses with a `0x`
   prefix, and ambiguous-name suggestions print entry addresses as `0x...`.
 - `search-decompiled` rejects `--limit`/`--max-scan` below 1.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 _SPACE_UNDERSCORE_RE = re.compile(r"[ _]+")
@@ -156,7 +157,7 @@ def _handle_find_bytes(ctx, args: dict) -> dict:
                 pass
 
         matches.append({
-            "address": str(addr),
+            "address": _fmt_address(addr),
             "context_hex": context_hex,
         })
 
@@ -196,7 +197,7 @@ def _handle_search_strings(ctx, args: dict) -> dict:
             val = str(data.getValue())
             if query_lower is None or query_lower in val.lower():
                 results.append({
-                    "address": str(data.getAddress()),
+                    "address": _fmt_address(data.getAddress()),
                     "value": val,
                     "type": str(data.getDataType()),
                 })
@@ -229,7 +230,7 @@ def _handle_search_symbols(ctx, args: dict) -> dict:
                 or query_norm in _normalize_symbol_query(full_name)):
             results.append({
                 "name": full_name,
-                "address": str(sym.getAddress()),
+                "address": _fmt_address(sym.getAddress()),
                 "type": str(sym.getSymbolType()),
             })
 

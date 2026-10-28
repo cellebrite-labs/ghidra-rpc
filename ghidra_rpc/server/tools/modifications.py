@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.decompiler import _find_function
 
@@ -213,7 +214,7 @@ def _handle_create_label(ctx, args: dict) -> dict:
             primary_after = syms_after[0]
         actual = str(primary_after.getName()) if primary_after else None
         return {
-            "address":  str(addr),
+            "address":  _fmt_address(addr),
             "name":     actual,
             "old_name": old_name,
             "created":  created,   # kept for backward compatibility
@@ -246,7 +247,7 @@ def _handle_rename_function(ctx, args: dict) -> dict:
         func = _find_function(pi, target)
         old_name = str(func.getName())
         old_ns = str(func.getParentNamespace().getName(True))
-        address = str(func.getEntryPoint())
+        address = _fmt_address(func.getEntryPoint())
 
         with ghidra_transaction(pi.program, f"ghidra-rpc: rename {old_name} -> {new_name}"):
             func.setName(new_name, SourceType.USER_DEFINED)
@@ -308,7 +309,7 @@ def _handle_rename_symbol(ctx, args: dict) -> dict:
                 ):
                     st.createLabel(addr, new_name, SourceType.USER_DEFINED)
                 return {
-                    "address":  str(addr),
+                    "address":  _fmt_address(addr),
                     "old_name": None,
                     "new_name": new_name,
                     "created":  True,
@@ -326,7 +327,7 @@ def _handle_rename_symbol(ctx, args: dict) -> dict:
 
         actual = str(sym.getName())
         return {
-            "address":  str(addr),
+            "address":  _fmt_address(addr),
             "old_name": old_name,
             "new_name": actual,
             "created":  False,
@@ -395,7 +396,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
         # Read back the comment to verify
         actual = pi.program.getListing().getComment(ghidra_ct, addr)
         return {
-            "address": str(addr),
+            "address": _fmt_address(addr),
             "comment_type": ct,
             "comment": str(actual) if actual else None,
             "verified": str(actual) == comment if actual else comment == "",
@@ -474,7 +475,7 @@ def _handle_set_function_signature(ctx, args: dict) -> dict:
 
         func = _find_function(pi, target)
         old_sig = str(func.getSignature())
-        address = str(func.getEntryPoint())
+        address = _fmt_address(func.getEntryPoint())
 
         parser = FunctionSignatureParser(pi.program.getDataTypeManager(), None)
         parsed = parser.parse(func.getSignature(False), signature)
@@ -569,7 +570,7 @@ def _handle_set_data_type(ctx, args: dict) -> dict:
             value = None
 
         return {
-            "address":   str(addr),
+            "address":   _fmt_address(addr),
             "data_type": str(dt.getName()),
             "length":    length,
             "value":     value,
@@ -1041,14 +1042,14 @@ def _handle_create_function(ctx, args: dict) -> dict:
         existing = fm.getFunctionAt(addr)
         if existing is not None:
             raise ValueError(
-                f"A function already exists at {addr}: {existing.getName()}. "
+                f"A function already exists at {_fmt_address(addr)}: {existing.getName()}. "
                 f"Use rename-function to rename it."
             )
         containing = fm.getFunctionContaining(addr)
         if containing is not None:
             raise ValueError(
-                f"Address {addr} is inside function '{containing.getName()}' "
-                f"({containing.getEntryPoint()}-{containing.getBody().getMaxAddress()}). "
+                f"Address {_fmt_address(addr)} is inside function '{containing.getName()}' "
+                f"({_fmt_address(containing.getEntryPoint())}-{_fmt_address(containing.getBody().getMaxAddress())}). "
                 f"Cannot create an overlapping function."
             )
 
@@ -1059,7 +1060,7 @@ def _handle_create_function(ctx, args: dict) -> dict:
 
         if func is None:
             raise RuntimeError(
-                f"Failed to create function at {addr}. The address may not "
+                f"Failed to create function at {_fmt_address(addr)}. The address may not "
                 f"contain valid code, or Ghidra could not determine the "
                 f"function body from flow analysis."
             )
@@ -1068,13 +1069,13 @@ def _handle_create_function(ctx, args: dict) -> dict:
         body = func.getBody()
         body_ranges = []
         for r in body:
-            body_ranges.append(f"{r.getMinAddress()}-{r.getMaxAddress()}")
+            body_ranges.append(f"{_fmt_address(r.getMinAddress())}-{_fmt_address(r.getMaxAddress())}")
 
         pi.decompiler_pool.invalidate_all()
 
         return {
             "name":    str(func.getName()),
-            "address": str(func.getEntryPoint()),
+            "address": _fmt_address(func.getEntryPoint()),
             "size":    int(body.getNumAddresses()),
             "body":    body_ranges,
         }
@@ -1118,7 +1119,7 @@ def _handle_set_calling_convention(ctx, args: dict) -> dict:
 
         func = _find_function(pi, target)
         old_cc = str(func.getCallingConventionName())
-        address = str(func.getEntryPoint())
+        address = _fmt_address(func.getEntryPoint())
 
         # Validate the convention name against the compiler spec
         compiler_spec = pi.program.getCompilerSpec()
@@ -1198,9 +1199,9 @@ def _handle_set_thunk(ctx, args: dict) -> dict:
                     str(thunked.getEntryPoint()) == str(target_func.getEntryPoint()))
 
         return {
-            "thunk_address":  str(thunk_func.getEntryPoint()),
+            "thunk_address":  _fmt_address(thunk_func.getEntryPoint()),
             "thunk_name":     str(thunk_func.getName()),
-            "target_address": str(target_func.getEntryPoint()),
+            "target_address": _fmt_address(target_func.getEntryPoint()),
             "target_name":    str(target_func.getName()),
             "verified":       verified,
         }
@@ -1282,7 +1283,7 @@ def _handle_set_flow_override(ctx, args: dict) -> dict:
         new_override = str(instr.getFlowOverride())
 
         return {
-            "address":      str(addr),
+            "address":      _fmt_address(addr),
             "override":     new_override,
             "old_override": old_override,
             "verified":     new_override == override_upper,
@@ -1566,19 +1567,19 @@ def _handle_batch_rename(ctx, args: dict) -> dict:
                                 st.createLabel(addr, new_name, SourceType.USER_DEFINED)
                             results[idx] = {
                                 "ok": True, "index": idx,
-                                "address": str(addr),
+                                "address": _fmt_address(addr),
                                 "old_name": old_name, "new_name": new_name,
                             }
                         except Exception as e:
                             results[idx] = {
                                 "ok": False, "index": idx,
-                                "address": str(addr), "new_name": new_name,
+                                "address": _fmt_address(addr), "new_name": new_name,
                                 "error": type(e).__name__, "message": str(e),
                             }
                     else:  # function
                         _, _, func, new_name, namespace = item
                         old_name = str(func.getName())
-                        address  = str(func.getEntryPoint())
+                        address  = _fmt_address(func.getEntryPoint())
                         try:
                             func.setName(new_name, SourceType.USER_DEFINED)
                             if namespace:
@@ -1707,13 +1708,13 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
                         listing.setComment(addr, ghidra_ct, comment if comment else None)
                         results[idx] = {
                             "ok": True, "index": idx,
-                            "address": str(addr),
+                            "address": _fmt_address(addr),
                             "comment_type": ct_name,
                             "comment": comment,
                         }
                     except Exception as e:
                         results[idx] = {
-                            "ok": False, "index": idx, "address": str(addr),
+                            "ok": False, "index": idx, "address": _fmt_address(addr),
                             "error": type(e).__name__, "message": str(e),
                         }
 
@@ -1771,7 +1772,7 @@ def _handle_delete_function(ctx, args: dict) -> dict:
 
         pi.decompiler_pool.invalidate_all()
         return {
-            "address": str(func_addr),
+            "address": _fmt_address(func_addr),
             "name":    func_name,
             "deleted": bool(removed),
         }

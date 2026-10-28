@@ -6,6 +6,7 @@ Assembly: assemble instruction text at an address using Ghidra's SLEIGH assemble
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 _DEFAULT_COUNT = 20
@@ -61,8 +62,8 @@ def _handle_disassemble(ctx, args: dict) -> dict:
     if instr is None:
         instr = listing.getInstructionAfter(addr)
         if instr is not None:
-            fallback_addr = str(instr.getAddress())
-            if fallback_addr != str(addr):
+            fallback_addr = _fmt_address(instr.getAddress())
+            if fallback_addr != _fmt_address(addr):
                 actual_start = fallback_addr
     if instr is None:
         # Give a more helpful message when the address is in a data section.
@@ -122,7 +123,7 @@ def _handle_disassemble(ctx, args: dict) -> dict:
                 pass
 
         instructions.append({
-            "address":  str(instr.getAddress()),
+            "address":  _fmt_address(instr.getAddress()),
             "bytes":    raw.hex(),
             "mnemonic": str(instr.getMnemonicString()),
             "operands": operand_str,
@@ -133,7 +134,7 @@ def _handle_disassemble(ctx, args: dict) -> dict:
         instr = instr.getNext()
 
     result = {
-        "address": str(addr),
+        "address": _fmt_address(addr),
         "count":   len(instructions),
         "listing": _format_listing(instructions),
     }
@@ -152,9 +153,9 @@ def _format_listing(instructions: list) -> str:
 
     Example::
 
-        00101159  55                PUSH    RBP
-        0010115a  4889e5            MOV     RBP,RSP
-        0010115d  53                PUSH    RBX
+        0x00101159  55                PUSH    RBP
+        0x0010115a  4889e5            MOV     RBP,RSP
+        0x0010115d  53                PUSH    RBX
     """
     if not instructions:
         return ""
@@ -240,7 +241,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
                 error_msg = str(e)
                 # Surface assembly errors clearly
                 raise ValueError(
-                    f"Assembly failed at {addr}: {error_msg}"
+                    f"Assembly failed at {_fmt_address(addr)}: {error_msg}"
                 ) from e
 
         # Read back the assembled instructions
@@ -269,7 +270,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
                     pass
 
             instructions.append({
-                "address":  str(current.getAddress()),
+                "address":  _fmt_address(current.getAddress()),
                 "bytes":    raw.hex(),
                 "mnemonic": str(current.getMnemonicString()),
                 "operands": ",".join(ops),
@@ -285,7 +286,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
         pi.decompiler_pool.invalidate_all()
 
         return {
-            "address":       str(addr),
+            "address":       _fmt_address(addr),
             "bytes_written": total_bytes,
             "hex":           "".join(all_hex),
             "instructions":  instructions,

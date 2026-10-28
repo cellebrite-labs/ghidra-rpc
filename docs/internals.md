@@ -91,6 +91,32 @@ only to `127.0.0.1`. Its temporary endpoint file contains the chosen port and a
 random authentication token; every client request must present that token. The
 wire format remains newline-delimited JSON on every platform.
 
+## Address Format
+
+Every address in a result goes through `_fmt_address()` in `context.py`, the
+inverse of `_parse_address()`:
+
+| Space | `Address.toString()` | Emitted |
+|-------|---------------------|---------|
+| default (`ram`) | `00101139` | `0x00101139` |
+| other (`EXTERNAL`, `register`, `const`, `unique`, ...) | `EXTERNAL:00000001` | `EXTERNAL:0x00000001` |
+| overlay | `ov1::00001000` | `ov1::0x00001000` |
+| stack | `Stack[-0x10]` | `Stack[-0x10]` (unchanged) |
+
+Ghidra's zero-padding is kept, so `0x00101139` lines up with `FUN_00101139`.
+`AddressFactory.getAddress()` itself accepts `0x` and `space:`/`overlay::`
+qualifiers, so `_parse_address()` passes the string straight through; the
+round-trip was verified for every space of the test ELF plus an overlay.
+
+`_looks_like_address()` (the `0x<hex>` tail, optionally space-qualified) is
+what `_find_function()` and `xrefs._resolve_address()` use to decide that a
+target is an address. Address-shaped input that hits no function raises rather
+than falling through to name matching. Bare hex stays a name query, but never
+partial-matches `SourceType.DEFAULT` names (`FUN_...`): otherwise `1139` would
+silently resolve to whichever auto-named function contains those digits.
+
+New handlers must emit addresses with `_fmt_address()`, never `str(addr)`.
+
 ## Analysis Control (`load --no-analyze`, `--analysis-timeout`)
 
 `_run_analysis(flat_api, program, *, timeout)` in `context.py`:

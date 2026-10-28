@@ -9,6 +9,7 @@ Provides commands for creating composite types and operating on address ranges:
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.modifications import (
     _maybe_swing,
@@ -294,8 +295,8 @@ def _handle_clear_data_range(ctx, args: dict) -> dict:
 
         pi.decompiler_pool.invalidate_all()
         return {
-            "start":   str(start_addr),
-            "end":     str(end_addr),
+            "start":   _fmt_address(start_addr),
+            "end":     _fmt_address(end_addr),
             "cleared": True,
         }
 
@@ -385,7 +386,7 @@ def _handle_apply_data_type_range(ctx, args: dict) -> dict:
                 except Exception as e:
                     # Record the failure but continue to the next position so
                     # that a single bad address does not stop the whole range.
-                    errors.append({"address": str(addr), "error": str(e)})
+                    errors.append({"address": _fmt_address(addr), "error": str(e)})
 
                 try:
                     addr = addr.add(dt_len)
@@ -395,8 +396,8 @@ def _handle_apply_data_type_range(ctx, args: dict) -> dict:
         pi.decompiler_pool.invalidate_all()
 
         result = {
-            "start":         str(start_addr),
-            "end":           str(end_addr),
+            "start":         _fmt_address(start_addr),
+            "end":           _fmt_address(end_addr),
             "data_type":     str(dt.getName()),
             "type_size":     dt_len,
             "applied_count": applied,
@@ -473,7 +474,7 @@ def _handle_list_labels(ctx, args: dict) -> dict:
                 if len(labels) < limit:
                     dt_name, dt_len = _data_type_at(sym.getAddress())
                     labels.append({
-                        "address":     str(sym.getAddress()),
+                        "address":     _fmt_address(sym.getAddress()),
                         "name":        str(sym.getName()),
                         "type":        str(sym.getSymbolType()),
                         "source":      str(sym.getSource()),
@@ -488,7 +489,7 @@ def _handle_list_labels(ctx, args: dict) -> dict:
             dt_name, dt_len = _data_type_at(addr)
             for sym in syms[:limit]:
                 labels.append({
-                    "address":     str(sym.getAddress()),
+                    "address":     _fmt_address(sym.getAddress()),
                     "name":        str(sym.getName()),
                     "type":        str(sym.getSymbolType()),
                     "source":      str(sym.getSource()),
@@ -711,7 +712,7 @@ def _handle_set_equate(ctx, args: dict) -> dict:
 
         pi.decompiler_pool.invalidate_all()
         return {
-            "address":        str(addr),
+            "address":        _fmt_address(addr),
             "operand_index":  operand_index,
             "equate_name":    equate_name,
             "value":          equate_value,
@@ -763,7 +764,7 @@ def _handle_list_equates(ctx, args: dict) -> dict:
                                 "name":          name,
                                 "value":         int(eq.getValue()),
                                 "operand_index": op_idx,
-                                "address":       str(addr),
+                                "address":       _fmt_address(addr),
                             })
         else:
             # All equates in the program.

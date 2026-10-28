@@ -6,6 +6,7 @@ Error, Info, Analysis), a category (free-form string), and a comment.
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.modifications import (
     _maybe_swing,
@@ -77,7 +78,7 @@ def _handle_set_bookmark(ctx, args: dict) -> dict:
             bm_mgr.setBookmark(addr, bm_type_norm, category, comment)
 
         return {
-            "address":  str(addr),
+            "address":  _fmt_address(addr),
             "type":     bm_type_norm,
             "category": category,
             "comment":  comment,
@@ -161,7 +162,7 @@ def _handle_list_bookmarks(ctx, args: dict) -> dict:
             total += 1
             if len(bookmarks) < limit:
                 bookmarks.append({
-                    "address":  str(bm.getAddress()),
+                    "address":  _fmt_address(bm.getAddress()),
                     "type":     str(bm.getTypeString()),
                     "category": bm_category,
                     "comment":  str(bm.getComment()),
@@ -218,7 +219,7 @@ def _handle_remove_bookmark(ctx, args: dict) -> dict:
 
         if bm is None:
             return {
-                "address": str(addr),
+                "address": _fmt_address(addr),
                 "type":    bm_type_norm,
                 "removed": False,
             }
@@ -230,7 +231,7 @@ def _handle_remove_bookmark(ctx, args: dict) -> dict:
             bm_mgr.removeBookmark(bm)
 
         return {
-            "address": str(addr),
+            "address": _fmt_address(addr),
             "type":    bm_type_norm,
             "removed": True,
         }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 
 _MAX_READ_BYTES = 65536  # 64 KB hard cap per request
@@ -46,13 +47,13 @@ def _handle_read_bytes(ctx, args: dict) -> dict:
         java_bytes = pi.flat_api.getBytes(addr, length)
     except Exception as e:
         # Catch Java MemoryAccessException (and any other Ghidra memory error)
-        raise ValueError(f"Memory read failed at {addr}: {e}")
+        raise ValueError(f"Memory read failed at {_fmt_address(addr)}: {e}")
 
     # JPype returns Java signed bytes (-128..127); convert to unsigned Python bytes.
     data = bytes(b & 0xFF for b in java_bytes)
 
     return {
-        "address": str(addr),
+        "address": _fmt_address(addr),
         "length": len(data),
         "hex": data.hex(),
         "hexdump": _format_hexdump(addr, data),
@@ -141,7 +142,7 @@ def _handle_read_pointers(ctx, args: dict) -> dict:
     try:
         raw = pi.flat_api.getBytes(addr, total)
     except Exception as e:
-        raise ValueError(f"Memory read failed at {addr} (len {total}): {e}")
+        raise ValueError(f"Memory read failed at {_fmt_address(addr)} (len {total}): {e}")
     data = bytes(b & 0xFF for b in raw)
 
     default_space = program.getAddressFactory().getDefaultAddressSpace()
@@ -163,13 +164,13 @@ def _handle_read_pointers(ctx, args: dict) -> dict:
             except Exception:
                 tgt = None
             if tgt is not None and memory.contains(tgt):
-                target_address = str(tgt)
+                target_address = _fmt_address(tgt)
                 target_name, target_kind = resolve_target_name(program, tgt)
 
         pointers.append({
             "index":          i,
             "offset":         i * ptr_size,
-            "slot_address":   str(slot_addr),
+            "slot_address":   _fmt_address(slot_addr),
             "value":          f"0x{value:x}",
             "target_address": target_address,
             "target_name":    target_name,
@@ -177,7 +178,7 @@ def _handle_read_pointers(ctx, args: dict) -> dict:
         })
 
     return {
-        "address":      str(addr),
+        "address":      _fmt_address(addr),
         "count":        count,
         "pointer_size": ptr_size,
         "endian":       byteorder,
@@ -190,17 +191,14 @@ def _format_hexdump(start_addr, data: bytes, width: int = 16) -> str:
 
     Example (width=16)::
 
-        00102039  25 31 30 73 00 43 33 6c  6c 33 62 72 31 74 65 00  |%10s.C3ll3br1te.|
+        0x00102039  25 31 30 73 00 43 33 6c  6c 33 62 72 31 74 65 00  |%10s.C3ll3br1te.|
     """
-    # Ghidra Address.toString() returns plain hex without 0x prefix (e.g. "00102039").
-    # Parse it as base-16 for arithmetic.
-    addr_str = str(start_addr)
-    base = int(addr_str.lstrip("0") or "0", 16)
+    base = int(start_addr.getUnsignedOffset())
 
     lines = []
     for offset in range(0, len(data), width):
         chunk = data[offset:offset + width]
-        line_addr = format(base + offset, "08x")
+        line_addr = f"0x{base + offset:08x}"
         # Two groups of 8 hex bytes separated by two spaces
         left  = chunk[:8]
         right = chunk[8:]
@@ -249,8 +247,8 @@ def _handle_memory_map(ctx, args: dict) -> dict:
 
         segments.append({
             "name":        str(block.getName()),
-            "start":       str(block.getStart()),
-            "end":         str(block.getEnd()),
+            "start":       _fmt_address(block.getStart()),
+            "end":         _fmt_address(block.getEnd()),
             "size":        int(block.getSize()),
             "read":        bool(block.isRead()),
             "write":       bool(block.isWrite()),
@@ -352,7 +350,7 @@ def _handle_write_bytes(ctx, args: dict) -> dict:
             verified = False
 
         return {
-            "address":  str(addr),
+            "address":  _fmt_address(addr),
             "length":   len(data),
             "hex":      data.hex(),
             "verified": verified,
