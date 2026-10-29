@@ -55,6 +55,10 @@
 
 ### Fixed
 
+- `xrefs-to` on an import's `EXTERNAL:` address now follows the full thunk
+  chain, so it returns the real call sites instead of only the GOT slot and
+  thunk (on x86-64 ELF the PLT thunk targets an intermediate thunk, not the
+  EXTERNAL function).
 - `--detach`'d daemons lost their persisted `ghidra_install_dir` moments
   after starting, on every platform: the detached child re-saves its own
   `Session` from bare `--mode`/`--project` argv, clobbering the parent's

@@ -806,6 +806,33 @@ class TestXrefs:
             f"Expected at least one xref to '{target}'"
         )
 
+    def test_xrefs_to_external_address_follows_thunk_chain(self, daemon):
+        """xrefs_to on an import's EXTERNAL address finds the same callers as by name.
+
+        Callers reach the EXTERNAL function through a chain of thunks (PLT stub
+        -> EXTERNAL-block thunk -> EXTERNAL function on x86-64 ELF), so only
+        following the first hop misses every real call site.
+        """
+        imports = rpc(daemon["sock"], "imports",
+                      {"binary": daemon["short_name"]})["result"]["imports"]
+        imp = next((i for i in imports if i["name"] == "malloc"), None)
+        assert imp is not None, "Expected malloc in imports"
+        assert imp["address"].startswith("EXTERNAL:"), imp
+
+        by_name = rpc(daemon["sock"], "xrefs_to",
+                      {"binary": daemon["short_name"],
+                       "target": "malloc", "limit": 500})["result"]["xrefs"]
+        by_addr = rpc(daemon["sock"], "xrefs_to",
+                      {"binary": daemon["short_name"],
+                       "target": imp["address"], "limit": 500})["result"]["xrefs"]
+
+        callers = {x["from_address"] for x in by_name if x["type"].endswith("CALL")}
+        assert callers, f"Expected call xrefs to malloc by name; got {by_name}"
+        missing = callers - {x["from_address"] for x in by_addr}
+        assert not missing, (
+            f"xrefs_to {imp['address']} missed callers found by name: {sorted(missing)}"
+        )
+
     def test_xrefs_to_entry_fields(self, daemon):
         from ghidra_rpc.client import DaemonError, send_request
 
