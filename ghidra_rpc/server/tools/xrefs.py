@@ -47,8 +47,10 @@ def _collect_xrefs_at(pi, addr, limit: int) -> list[dict]:
     When ``addr`` falls in the EXTERNAL address space (e.g. an imported
     function's EXTERNAL symbol), callers don't reference that synthetic
     address directly — they call through thunk/PLT stubs — so this also walks
-    every thunk function whose immediate target is ``addr`` and includes its
-    callers too.
+    every thunk function whose fully resolved target is ``addr`` and includes
+    its callers too.  The chain can be more than one hop: on x86-64 ELF the
+    PLT thunk targets an intermediate thunk in the ``EXTERNAL`` memory block,
+    which in turn targets the EXTERNAL-space function.
     """
     rm = pi.program.getReferenceManager()
     fm = pi.program.getFunctionManager()
@@ -58,8 +60,8 @@ def _collect_xrefs_at(pi, addr, limit: int) -> list[dict]:
         for func in fm.getFunctions(True):
             if func.isThunk():
                 try:
-                    thunked = func.getThunkedFunction(False)
-                    if thunked is not None and str(thunked.getEntryPoint()) == str(addr):
+                    thunked = func.getThunkedFunction(True)
+                    if thunked is not None and thunked.getEntryPoint().equals(addr):
                         addrs_to_check.append(func.getEntryPoint())
                 except Exception:
                     pass
