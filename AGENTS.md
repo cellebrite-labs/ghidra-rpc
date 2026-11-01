@@ -144,11 +144,18 @@ ghidra-rpc/
     ├── test_gui_modal_dialogs.py — GUI mode never blocks on a Ghidra modal: load_binary flags
     │                              the program not to ask "Analyze now?", close() clears the
     │                              duplicate-CodeBrowser "Save Tool Changes?" (fakes; gotcha 14)
+    ├── test_tool_helpers.py     — Pure helpers (_normalise_decompiled/_disassembly,
+    │                              _sanitize_signature, _format_hexdump) and the argument
+    │                              validation write_bytes/assemble/function_diff/decompile_all/
+    │                              goto do before resolving a program (no Ghidra needed)
     ├── test_integration.py      — End-to-end integration tests against a real headless
     │                              Ghidra daemon loading tests/fixtures/testapp, covering
     │                              every API domain.  Skipped unless GHIDRA_INSTALL_DIR is
     │                              set.  Uses a single module-scoped daemon fixture so
-    │                              Ghidra starts only once per pytest run.
+    │                              Ghidra starts only once per pytest run.  Writes with no
+    │                              inverse (set-thunk, set-equate, set-signature, ...) run
+    │                              against throwaway copies of testapp (the `scratch` /
+    │                              `diff_copy` fixtures), not the shared `testapp`.
     └── fixtures/                — testapp (x86-64 ELF) + testapp.c, the committed test
                                     binary loaded by test_integration.py, plus
                                     dex/ (two real-world DEX fixtures for
@@ -254,7 +261,7 @@ uv venv && uv pip install -e .
 ```bash
 python -m pytest tests/test_protocol.py tests/test_client.py tests/test_session_registry.py \
   tests/test_cli.py tests/test_search_decompiled.py tests/test_gui_context.py \
-  tests/test_address_format.py tests/test_gui_modal_dialogs.py -v
+  tests/test_address_format.py tests/test_gui_modal_dialogs.py tests/test_tool_helpers.py -v
 ```
 
 ### Running Integration Tests (requires Ghidra)

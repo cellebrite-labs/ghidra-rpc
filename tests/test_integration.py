@@ -2323,10 +2323,13 @@ class TestAddressFormat:
                          {"binary": daemon["short_name"], "func": fun["name"][4:]})
 
 
-def _find_block(daemon, name):
-    """Return the memory_map segment dict named *name*, or skip if absent."""
+def _find_block(daemon, name, binary=None):
+    """Return the memory_map segment dict named *name*, or skip if absent.
+
+    *binary* defaults to the shared ``testapp``.
+    """
     segs = rpc(daemon["sock"], "memory_map",
-               {"binary": daemon["short_name"]})["result"]["segments"]
+               {"binary": binary or daemon["short_name"]})["result"]["segments"]
     blk = next((s for s in segs if s["name"] == name), None)
     if blk is None:
         pytest.skip(f"binary has no '{name}' block; available: "
@@ -2658,3 +2661,830 @@ class TestNamespacesNative:
         assert f"{parent}::{child}" in paths, (
             f"nested namespace not found via tree walk: {paths}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Handlers that rewrite or compare programs
+#
+# Most of the writes below have no inverse command (set-thunk, set-equate,
+# set-calling-convention, set-signature, set-data-type, delete-function all
+# leave state behind that can't be put back exactly), so they run against
+# throwaway copies of testapp instead of the shared ``testapp`` the read-only
+# tests depend on.  A copy loads and analyses in a few seconds.
+#
+# The copies' names must not substring-match each other or ``testapp``:
+# ``get_program`` resolves by ``binary in key``.
+#
+# Within ``scratch`` each test touches its own function or address so the
+# tests stay independent of run order.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def rpc_error(sock: Path, cmd: str, args: dict | None = None,
+              *, timeout: float = _RPC_TIMEOUT):
+    """Send a request that must fail; return the ``DaemonError``."""
+    from ghidra_rpc.client import DaemonError, send_request
+    try:
+        resp = send_request(sock, cmd, args or {}, socket_timeout=timeout)
+    except DaemonError as exc:
+        return exc
+    pytest.fail(f"Expected '{cmd}' to fail, but it returned: {resp}")
+
+
+def _load_copy(daemon, tmp_path_factory, name: str) -> dict:
+    """Load a copy of testapp named *name*; return its short name + function map."""
+    import shutil
+
+    path = tmp_path_factory.mktemp(name) / name
+    shutil.copy(_TEST_BINARY, path)
+    short = rpc(daemon["sock"], "load", {"path": str(path), "analyze": True},
+                timeout=_LOAD_TIMEOUT)["result"]["short_name"]
+    funcs = rpc(daemon["sock"], "functions", {"binary": short})["result"]["functions"]
+    return {"name": short, "funcs": {f["name"]: f["address"] for f in funcs}}
+
+
+@pytest.fixture(scope="module")
+def scratch(daemon, tmp_path_factory):
+    """A disposable copy of testapp for destructive writes."""
+    return _load_copy(daemon, tmp_path_factory, "gapscratch_bin")
+
+
+@pytest.fixture(scope="module")
+def diff_pair(daemon, tmp_path_factory):
+    """Two byte-identical copies for diff/match tests, pristine except inside
+    tests that patch one and restore it.  The shared ``testapp`` can't serve
+    as the baseline: earlier tests retype its variables, which changes how
+    its functions decompile."""
+    return (_load_copy(daemon, tmp_path_factory, "gapdiff_a_bin"),
+            _load_copy(daemon, tmp_path_factory, "gapdiff_b_bin"))
+
+
+def _insns(daemon, binary: str, address: str, count: int) -> list[dict]:
+    return rpc(daemon["sock"], "disassemble", {
+        "binary": binary, "address": address, "count": count,
+        "with_instructions": True,
+    })["result"]["instructions"]
+
+
+def _insn_text(insn: dict) -> str:
+    """Assembler source for a disassembled instruction (round-trips through assemble)."""
+    return f"{insn['mnemonic']} {insn['operands']}".strip()
+
+
+def _read_hex(daemon, binary: str, address: str, length: int) -> str:
+    return rpc(daemon["sock"], "read_bytes", {
+        "binary": binary, "address": address, "length": length,
+    })["result"]["hex"]
+
+
+def _offset(address: str, delta: int) -> str:
+    return f"0x{int(address, 16) + delta:08x}"
+
+
+def _labels(daemon, binary: str, address: str, end: str | None = None) -> list[dict]:
+    args = {"binary": binary, "address": address}
+    if end:
+        args["end"] = end
+    return rpc(daemon["sock"], "list_labels", args)["result"]["labels"]
+
+
+def _function_entry(daemon, binary: str, name: str, *, with_body: bool = False,
+                    include_externals: bool = False) -> dict | None:
+    funcs = rpc(daemon["sock"], "functions", {
+        "binary": binary, "with_body": with_body,
+        "include_externals": include_externals,
+    })["result"]["functions"]
+    return next((f for f in funcs if f["name"] == name), None)
+
+
+def _unlabelled_addresses(daemon, binary: str, count: int) -> list[str]:
+    """Return *count* addresses in .rodata that carry no symbol."""
+    start = _find_block(daemon, ".rodata", binary)["start"]
+    found = []
+    for delta in range(1, 128):
+        addr = _offset(start, delta)
+        if not _labels(daemon, binary, addr):
+            found.append(addr)
+            if len(found) == count:
+                return found
+    pytest.fail(f"found only {len(found)} unlabelled addresses near {start}")
+
+
+# ── exports ───────────────────────────────────────────────────────────────────
+
+class TestExports:
+    def test_exports_lists_global_functions_only(self, daemon):
+        result = rpc(daemon["sock"], "exports", {"binary": daemon["short_name"]})["result"]
+        assert result["count"] == len(result["exports"]) > 0
+        for exp in result["exports"]:
+            assert exp["name"] and exp["address"].startswith("0x"), exp
+        names = {e["name"] for e in result["exports"]}
+        assert {"stack_push", "factorial"} <= names, sorted(names)
+        # node_alloc is `static` in testapp.c, so it must not be exported.
+        assert "node_alloc" not in names
+
+
+# ── write_bytes ───────────────────────────────────────────────────────────────
+
+class TestWriteBytes:
+    def test_round_trip_in_data_segment(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = _find_block(daemon, ".data", binary)["start"]
+        original = _read_hex(daemon, binary, addr, 2)
+        patched = "".join(f"{b ^ 0xFF:02x}" for b in bytes.fromhex(original))
+        spaced = " ".join(patched[i:i + 2] for i in range(0, len(patched), 2))
+
+        try:
+            result = rpc(sock, "write_bytes",
+                         {"binary": binary, "address": addr, "hex": spaced})["result"]
+            assert result["verified"] is True
+            assert result["length"] == 2
+            assert result["hex"] == patched   # spaces stripped
+            assert _read_hex(daemon, binary, addr, 2) == patched
+        finally:
+            rpc(sock, "write_bytes", {"binary": binary, "address": addr, "hex": original})
+        assert _read_hex(daemon, binary, addr, 2) == original
+
+    def test_overwriting_an_instruction_is_rejected(self, daemon, scratch):
+        """Ghidra refuses setBytes over a defined instruction; the bytes must be untouched."""
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = scratch["funcs"]["factorial"]
+        original = _read_hex(daemon, binary, addr, 4)
+
+        rpc_error(sock, "write_bytes", {"binary": binary, "address": addr, "hex": "90909090"})
+
+        assert _read_hex(daemon, binary, addr, 4) == original
+
+    def test_clear_then_write_patches_code(self, daemon, scratch):
+        """The documented route for patching code: clear the instruction first."""
+        sock, binary = daemon["sock"], scratch["name"]
+        insn = _insns(daemon, binary, scratch["funcs"]["count_char"], 2)[1]
+        addr, length = insn["address"], insn["length"]
+        original = _read_hex(daemon, binary, addr, length)
+
+        try:
+            rpc(sock, "clear_data_range", {
+                "binary": binary, "start": addr, "end": _offset(addr, length - 1),
+            })
+            result = rpc(sock, "write_bytes", {
+                "binary": binary, "address": addr, "hex": "90" * length,
+            })["result"]
+            assert result["verified"] is True
+            assert _read_hex(daemon, binary, addr, length) == "90" * length
+        finally:
+            rpc(sock, "assemble", {
+                "binary": binary, "address": addr, "instructions": [_insn_text(insn)],
+            })
+        assert _read_hex(daemon, binary, addr, length) == original
+
+    def test_unmapped_address_is_rejected(self, daemon, scratch):
+        rpc_error(daemon["sock"], "write_bytes",
+                  {"binary": scratch["name"], "address": "0x7fff0000", "hex": "00"})
+
+
+# ── assemble ──────────────────────────────────────────────────────────────────
+
+class TestAssemble:
+    @staticmethod
+    def _immediate_store(daemon, scratch) -> dict:
+        """First `MOV <mem>,0x0` in sum_array (the `total = 0` store)."""
+        insns = _insns(daemon, scratch["name"], scratch["funcs"]["sum_array"], 12)
+        insn = next((i for i in insns
+                     if i["mnemonic"] == "MOV" and i["operands"].endswith(",0x0")
+                     and i["length"] >= 4), None)
+        assert insn, f"no `MOV mem,0x0` in sum_array: {insns}"
+        return insn
+
+    def test_assemble_rewrites_instruction_and_listing(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        insn = self._immediate_store(daemon, scratch)
+        addr = insn["address"]
+        original = bytes.fromhex(insn["bytes"])
+        patched_text = f"MOV {insn['operands'][:-3]}0x5"
+
+        try:
+            result = rpc(sock, "assemble", {
+                "binary": binary, "address": addr, "instructions": [patched_text],
+            })["result"]
+            assert result["address"] == addr
+            assert result["bytes_written"] == len(original)
+            assert len(result["instructions"]) == 1
+            assert result["instructions"][0]["operands"].endswith(",0x5")
+            # imm32 immediate: only the low immediate byte differs from `...,0x0`.
+            assert bytes.fromhex(result["hex"]) == original[:-4] + b"\x05\x00\x00\x00"
+            assert _read_hex(daemon, binary, addr, len(original)) == result["hex"]
+
+            listing = rpc(sock, "disassemble",
+                          {"binary": binary, "address": addr, "count": 1})["result"]["listing"]
+            assert ",0x5" in listing, listing
+        finally:
+            rpc(sock, "assemble", {
+                "binary": binary, "address": addr, "instructions": [_insn_text(insn)],
+            })
+        assert _read_hex(daemon, binary, addr, len(original)) == original.hex()
+
+    def test_syntax_error_is_reported_and_leaves_bytes_alone(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        insn = self._immediate_store(daemon, scratch)
+        before = _read_hex(daemon, binary, insn["address"], insn["length"])
+
+        exc = rpc_error(sock, "assemble", {
+            "binary": binary, "address": insn["address"],
+            "instructions": ["NOTANINSTRUCTION EAX"],
+        })
+
+        assert exc.error == "ValueError"
+        assert "Assembly failed" in str(exc)
+        assert _read_hex(daemon, binary, insn["address"], insn["length"]) == before
+
+
+# ── function lifecycle and signature-level edits ──────────────────────────────
+
+class TestFunctionLifecycle:
+    def test_delete_then_create_restores_function_body(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        name, addr = "greet_casual", scratch["funcs"]["greet_casual"]
+        before = _function_entry(daemon, binary, name, with_body=True)
+        assert before is not None
+
+        deleted = rpc(sock, "delete_function", {"binary": binary, "target": name})["result"]
+        assert deleted == {"address": addr, "name": name, "deleted": True}
+        assert _function_entry(daemon, binary, name) is None
+
+        created = rpc(sock, "create_function",
+                      {"binary": binary, "address": addr, "name": name})["result"]
+        assert created["address"] == addr and created["name"] == name
+        assert created["size"] == before["body_size"]
+
+        after = _function_entry(daemon, binary, name, with_body=True)
+        assert after is not None
+        assert (after["body_min"], after["body_max"]) == (before["body_min"], before["body_max"])
+
+    def test_create_function_rejects_existing_and_overlapping(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = scratch["funcs"]["factorial"]
+        inside = _insns(daemon, binary, addr, 2)[1]["address"]
+
+        assert "factorial" in str(rpc_error(sock, "create_function",
+                                            {"binary": binary, "address": addr, "name": "dup"}))
+        assert "factorial" in str(rpc_error(sock, "create_function",
+                                            {"binary": binary, "address": inside, "name": "dup"}))
+        assert _function_entry(daemon, binary, "dup") is None
+
+    def test_set_thunk_hides_function_from_default_listing(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+
+        result = rpc(sock, "set_thunk", {
+            "binary": binary, "thunk": "stack_free", "target": "factorial",
+        })["result"]
+
+        assert result["verified"] is True
+        assert result["thunk_name"] == "stack_free"
+        assert result["target_name"] == "factorial"
+        assert result["thunk_address"] == scratch["funcs"]["stack_free"]
+        assert result["target_address"] == scratch["funcs"]["factorial"]
+        assert _function_entry(daemon, binary, "stack_free") is None
+        assert _function_entry(daemon, binary, "stack_free", include_externals=True) is not None
+
+    def test_set_thunk_to_itself_is_rejected(self, daemon, scratch):
+        rpc_error(daemon["sock"], "set_thunk", {
+            "binary": scratch["name"], "thunk": "str_dup_upper", "target": "str_dup_upper",
+        })
+
+    def test_set_calling_convention_round_trip(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        listing = rpc(sock, "list_calling_conventions", {"binary": binary})["result"]
+        default = listing["default"]
+        other = next(c for c in listing["conventions"]
+                     if c != default and c not in ("processEntry", "syscall"))
+
+        changed = rpc(sock, "set_calling_convention", {
+            "binary": binary, "target": "count_char", "convention": other,
+        })["result"]
+        assert changed["new_convention"] == other and changed["verified"] is True
+        assert changed["address"] == scratch["funcs"]["count_char"]
+
+        back = rpc(sock, "set_calling_convention", {
+            "binary": binary, "target": "count_char", "convention": default,
+        })["result"]
+        assert back["old_convention"] == other
+        assert back["new_convention"] == default and back["verified"] is True
+
+    def test_set_calling_convention_rejects_unknown_name(self, daemon, scratch):
+        exc = rpc_error(daemon["sock"], "set_calling_convention", {
+            "binary": scratch["name"], "target": "count_char", "convention": "__nope",
+        })
+        listing = rpc(daemon["sock"], "list_calling_conventions",
+                      {"binary": scratch["name"]})["result"]
+        # The error names the valid choices so callers can self-correct.
+        assert all(c in str(exc) for c in listing["conventions"])
+
+    def test_set_function_signature_updates_listing(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+
+        result = rpc(sock, "set_function_signature", {
+            "binary": binary, "target": "str_dup_upper",
+            "signature": "char * str_dup_upper(char * text);",
+        })["result"]
+
+        assert result["verified"] is True
+        entry = _function_entry(daemon, binary, "str_dup_upper")
+        assert "str_dup_upper(char * text)" in entry["signature"], entry
+
+    def test_set_flow_override_round_trip(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        call = next(i for i in _insns(daemon, binary, scratch["funcs"]["main"], 30)
+                    if i["mnemonic"] == "CALL")
+
+        try:
+            set_ = rpc(sock, "set_flow_override", {
+                "binary": binary, "address": call["address"], "override": "CALL_RETURN",
+            })["result"]
+            assert (set_["old_override"], set_["override"], set_["verified"]) == (
+                "NONE", "CALL_RETURN", True)
+        finally:
+            reset = rpc(sock, "set_flow_override", {
+                "binary": binary, "address": call["address"], "override": "NONE",
+            })["result"]
+        assert (reset["old_override"], reset["override"], reset["verified"]) == (
+            "CALL_RETURN", "NONE", True)
+
+    def test_set_flow_override_rejects_unknown_value(self, daemon, scratch):
+        call = next(i for i in _insns(daemon, scratch["name"], scratch["funcs"]["main"], 30)
+                    if i["mnemonic"] == "CALL")
+        rpc_error(daemon["sock"], "set_flow_override", {
+            "binary": scratch["name"], "address": call["address"], "override": "BOGUS",
+        })
+
+
+# ── data definitions and labels ───────────────────────────────────────────────
+
+class TestDataDefinitions:
+    def test_set_data_type_is_visible_in_list_labels(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = _find_block(daemon, ".data", binary)["start"]
+
+        result = rpc(sock, "set_data_type", {
+            "binary": binary, "address": addr, "data_type": "int",
+        })["result"]
+
+        assert (result["address"], result["data_type"], result["length"]) == (addr, "int", 4)
+        labels = _labels(daemon, binary, addr)
+        assert labels, "expected the .data start label"
+        assert all(l["data_type"] == "int" and l["data_length"] == 4 for l in labels), labels
+
+    def test_apply_data_type_range_then_clear(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        bss = _find_block(daemon, ".bss", binary)
+        if bss["size"] < 16:
+            pytest.skip(f".bss too small for a 16-byte range: {bss}")
+        start, end = bss["start"], _offset(bss["start"], 15)
+
+        applied = rpc(sock, "apply_data_type_range", {
+            "binary": binary, "start": start, "end": end,
+            "data_type": "int", "clear": True,
+        })["result"]
+        assert (applied["type_size"], applied["applied_count"]) == (4, 4)
+        labels = _labels(daemon, binary, start, end)
+        assert labels and all(l["data_type"] == "int" for l in labels), labels
+
+        cleared = rpc(sock, "clear_data_range",
+                      {"binary": binary, "start": start, "end": end})["result"]
+        assert cleared["cleared"] is True
+        labels = _labels(daemon, binary, start, end)
+        assert labels and all(l["data_type"] == "undefined" for l in labels), labels
+
+    def test_list_labels_range_reports_function_symbols(self, daemon, scratch):
+        addr = scratch["funcs"]["sum_array"]
+        labels = _labels(daemon, scratch["name"], addr, _offset(addr, 0x10))
+        entry = next((l for l in labels if l["name"] == "sum_array"), None)
+        assert entry is not None, labels
+        assert entry["address"] == addr and entry["type"] == "Function"
+
+
+# ── equates ───────────────────────────────────────────────────────────────────
+
+class TestEquates:
+    """Equates attach to an instruction operand; main's ``i <= 6`` loop bound
+    is `CMP [mem],0x6`.  No decompile is needed to find it.
+
+    Matched on the instruction's bytes (imm8 is the last one): once an equate
+    is applied the operand text reads as the equate's name, not ``0x6``."""
+
+    @staticmethod
+    def _loop_bound(daemon, scratch) -> str:
+        insn = next((i for i in _insns(daemon, scratch["name"], scratch["funcs"]["main"], 40)
+                     if i["mnemonic"] == "CMP" and i["bytes"].endswith("06")), None)
+        assert insn, "no `CMP mem,0x6` in main"
+        return insn["address"]
+
+    def test_set_equate_shows_in_listing_and_list_equates(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = self._loop_bound(daemon, scratch)
+        name = f"GRPC_LOOP_MAX_{uuid.uuid4().hex[:6]}"
+
+        result = rpc(sock, "set_equate", {
+            "binary": binary, "address": addr, "equate_name": name,
+            "value": 6, "operand_index": 1,
+        })["result"]
+
+        assert result["verified"] is True and result["enum_linked"] is False
+        at_addr = rpc(sock, "list_equates", {"binary": binary, "address": addr})["result"]
+        assert [(e["name"], e["value"], e["operand_index"]) for e in at_addr["equates"]] == [
+            (name, 6, 1)]
+        everywhere = rpc(sock, "list_equates", {"binary": binary})["result"]["equates"]
+        assert {"name": name, "value": 6} in everywhere
+        listing = rpc(sock, "disassemble",
+                      {"binary": binary, "address": addr, "count": 1})["result"]["listing"]
+        assert name in listing, listing
+
+    def test_set_equate_links_to_enum_entry(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = self._loop_bound(daemon, scratch)
+        uid = uuid.uuid4().hex[:6]
+        enum, entry = f"EqEnum_{uid}", f"EQ_SIX_{uid}"
+        rpc(sock, "create_enum", {
+            "binary": binary, "name": enum, "values": [{"name": entry, "value": 6}],
+        })
+
+        result = rpc(sock, "set_equate", {
+            "binary": binary, "address": addr, "equate_name": entry,
+            "enum_path": enum, "value": 6, "operand_index": 1,
+        })["result"]
+
+        assert result["enum_linked"] is True and result["verified"] is True
+        at_addr = rpc(sock, "list_equates", {"binary": binary, "address": addr})["result"]
+        assert [e["name"] for e in at_addr["equates"]] == [entry]
+
+    def test_set_equate_rejects_name_missing_from_enum(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        uid = uuid.uuid4().hex[:6]
+        enum = f"EqEnumStrict_{uid}"
+        rpc(sock, "create_enum", {
+            "binary": binary, "name": enum, "values": [{"name": f"ONLY_{uid}", "value": 6}],
+        })
+        exc = rpc_error(sock, "set_equate", {
+            "binary": binary, "address": self._loop_bound(daemon, scratch),
+            "equate_name": "NOT_IN_ENUM", "enum_path": enum, "value": 6,
+        })
+        assert "NOT_IN_ENUM" in str(exc)
+
+
+# ── symbols and batch edits ───────────────────────────────────────────────────
+
+class TestSymbolsAndBatchEdits:
+    def test_rename_symbol_and_restore(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = _find_block(daemon, ".data", binary)["start"]
+        new_name = f"grpc_renamed_{uuid.uuid4().hex[:6]}"
+
+        result = rpc(sock, "rename_symbol", {
+            "binary": binary, "address": addr, "new_name": new_name,
+        })["result"]
+        old_name = result["old_name"]
+        try:
+            assert result["new_name"] == new_name and result["verified"] is True
+            assert result["created"] is False
+            assert new_name in [l["name"] for l in _labels(daemon, binary, addr)]
+        finally:
+            rpc(sock, "rename_symbol", {"binary": binary, "address": addr, "new_name": old_name})
+        assert old_name in [l["name"] for l in _labels(daemon, binary, addr)]
+
+    def test_rename_symbol_create_adds_label_at_unlabelled_address(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        addr = _unlabelled_addresses(daemon, binary, 1)[0]
+        name = f"grpc_created_{uuid.uuid4().hex[:6]}"
+
+        result = rpc(sock, "rename_symbol", {
+            "binary": binary, "address": addr, "new_name": name, "create": True,
+        })["result"]
+
+        assert result["created"] is True and result["verified"] is True
+        assert name in [l["name"] for l in _labels(daemon, binary, addr)]
+
+    def test_batch_rename_applies_good_items_and_reports_the_bad_one(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        uid = uuid.uuid4().hex[:6]
+        renames = {"greet_formal": f"gf_{uid}", "stack_pop": f"sp_{uid}"}
+        ops = [{"target": old, "new_name": new} for old, new in renames.items()]
+        ops.insert(1, {"target": f"no_such_function_{uid}", "new_name": "x"})
+
+        result = rpc(sock, "batch_rename", {"binary": binary, "operations": ops})["result"]
+
+        assert (result["count"], result["ok_count"], result["error_count"]) == (3, 2, 1)
+        assert [r["ok"] for r in result["results"]] == [True, False, True]
+        assert [r["index"] for r in result["results"]] == [0, 1, 2]
+        assert result["results"][0]["old_name"] == "greet_formal"
+        assert "error" in result["results"][1]
+        # The failure did not roll back its neighbours.
+        for new in renames.values():
+            assert _function_entry(daemon, binary, new) is not None, new
+
+    def test_batch_rename_label_mode_creates_labels(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        uid = uuid.uuid4().hex[:6]
+        addrs = _unlabelled_addresses(daemon, binary, 2)
+        names = [f"grpc_batch_{uid}_{i}" for i in range(2)]
+
+        result = rpc(sock, "batch_rename", {
+            "binary": binary, "mode": "label",
+            "operations": [{"address": a, "new_name": n, "create": True}
+                           for a, n in zip(addrs, names)],
+        })["result"]
+
+        assert (result["ok_count"], result["error_count"]) == (2, 0)
+        for addr, name in zip(addrs, names):
+            assert name in [l["name"] for l in _labels(daemon, binary, addr)]
+
+    def test_batch_set_comment_applies_good_items_and_reports_the_bad_one(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        insns = _insns(daemon, binary, scratch["funcs"]["count_char"], 4)
+        first, second, third = insns[0]["address"], insns[1]["address"], insns[2]["address"]
+        uid = uuid.uuid4().hex[:6]
+
+        result = rpc(sock, "batch_set_comment", {"binary": binary, "operations": [
+            {"address": first, "comment": f"first-{uid}"},
+            {"address": second, "comment": "x", "comment_type": "bogus"},
+            {"address": third, "comment": f"third-{uid}", "comment_type": "eol"},
+        ]})["result"]
+
+        try:
+            assert (result["count"], result["ok_count"], result["error_count"]) == (3, 2, 1)
+            assert [r["ok"] for r in result["results"]] == [True, False, True]
+            assert result["results"][0]["comment_type"] == "eol"   # default
+            listing = rpc(sock, "disassemble", {
+                "binary": binary, "address": first, "count": 3,
+            })["result"]["listing"]
+            assert f"first-{uid}" in listing and f"third-{uid}" in listing, listing
+        finally:
+            rpc(sock, "batch_set_comment", {"binary": binary, "operations": [
+                {"address": first, "comment": ""}, {"address": third, "comment": ""},
+            ]})
+
+
+# ── type edits ────────────────────────────────────────────────────────────────
+
+class TestTypeEdits:
+    def test_create_union_overlays_all_members_at_offset_zero(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        name = f"GrpcUnion_{uuid.uuid4().hex[:6]}"
+
+        result = rpc(sock, "create_union", {"binary": binary, "name": name, "fields": [
+            {"type": "int", "name": "as_int"},
+            {"type": "char[8]", "name": "as_bytes"},
+        ]})["result"]
+
+        assert result["name"] == name and result["already_existed"] is False
+        assert result["size"] == 8                       # the largest member
+        assert [(f["name"], f["offset"], f["length"]) for f in result["fields"]] == [
+            ("as_int", 0, 4), ("as_bytes", 0, 8)]
+        listed = rpc(sock, "list_data_types", {
+            "binary": binary, "category": "union", "query": name,
+        })["result"]
+        assert [d["name"] for d in listed["data_types"]] == [name]
+
+    def test_modify_struct_edits_a_field_by_name_and_by_offset(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        name = f"GrpcStruct_{uuid.uuid4().hex[:6]}"
+        rpc(sock, "create_struct", {"binary": binary, "name": name, "fields": [
+            {"type": "int", "name": "a"}, {"type": "int", "name": "b"},
+            {"type": "int", "name": "c"},
+        ]})
+
+        by_name = rpc(sock, "modify_struct", {
+            "binary": binary, "struct_name": name, "field_name": "b",
+            "new_name": "b_renamed", "new_type": "short", "new_comment": "narrowed",
+        })["result"]
+        modified = by_name["modified_field"]
+        assert (modified["offset"], modified["old_name"], modified["new_name"]) == (
+            4, "b", "b_renamed")
+        fields = {f["offset"]: f for f in by_name["fields"]}
+        assert (fields[4]["name"], fields[4]["data_type"], fields[4]["length"]) == (
+            "b_renamed", "short", 2)
+        assert fields[4]["comment"] == "narrowed"
+        # Shrinking b must not shift the field after it.
+        assert (fields[8]["name"], fields[8]["data_type"]) == ("c", "int")
+
+        by_offset = rpc(sock, "modify_struct", {
+            "binary": binary, "struct_name": name, "field_offset": 0, "new_name": "a_renamed",
+        })["result"]
+        assert by_offset["modified_field"]["offset"] == 0
+        assert {f["offset"]: f["name"] for f in by_offset["fields"]}[0] == "a_renamed"
+
+    def test_modify_struct_rejects_unknown_field(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        name = f"GrpcStructErr_{uuid.uuid4().hex[:6]}"
+        rpc(sock, "create_struct", {"binary": binary, "name": name,
+                                    "fields": [{"type": "int", "name": "only"}]})
+        exc = rpc_error(sock, "modify_struct", {
+            "binary": binary, "struct_name": name, "field_name": "missing", "new_name": "x",
+        })
+        assert "missing" in str(exc)
+
+    def test_modify_enum_adds_and_removes_entries(self, daemon, scratch):
+        sock, binary = daemon["sock"], scratch["name"]
+        name = f"GrpcEnum_{uuid.uuid4().hex[:6]}"
+        rpc(sock, "create_enum", {"binary": binary, "name": name, "values": [
+            {"name": "A", "value": 1}, {"name": "B", "value": 2},
+        ]})
+
+        result = rpc(sock, "modify_enum", {
+            "binary": binary, "name": name,
+            "add": [{"name": "C", "value": 3}], "remove": ["A"],
+        })["result"]
+
+        assert {v["name"]: v["value"] for v in result["values"]} == {"B": 2, "C": 3}
+
+    def test_modify_enum_rejects_unknown_enum(self, daemon, scratch):
+        rpc_error(daemon["sock"], "modify_enum", {
+            "binary": scratch["name"], "name": f"NoSuchEnum_{uuid.uuid4().hex[:6]}",
+            "add": [{"name": "X", "value": 1}],
+        })
+
+
+# ── processor context ─────────────────────────────────────────────────────────
+
+class TestProcessorContext:
+    def test_get_reports_x86_64_long_mode(self, daemon):
+        result = rpc(daemon["sock"], "get_processor_context", {
+            "binary": daemon["short_name"], "address": daemon["main_addr"],
+        })["result"]
+        assert result["address"] == daemon["main_addr"]
+        assert result["registers"]["longMode"] == 1
+        assert result["registers"]["bit64"] == 1
+
+    def test_get_with_register_filter_returns_only_that_register(self, daemon):
+        result = rpc(daemon["sock"], "get_processor_context", {
+            "binary": daemon["short_name"], "address": daemon["main_addr"],
+            "register": "bit64",
+        })["result"]
+        assert result["registers"] == {"bit64": 1}
+
+    def test_get_rejects_unknown_register(self, daemon):
+        rpc_error(daemon["sock"], "get_processor_context", {
+            "binary": daemon["short_name"], "address": daemon["main_addr"],
+            "register": "NoSuchRegister",
+        })
+
+    def test_set_applies_over_the_inclusive_range_only(self, daemon, scratch):
+        """DF (the x86 direction-flag context bit) set on [a, a+3] is visible at both
+        ends of the range and absent just past it."""
+        sock, binary = daemon["sock"], scratch["name"]
+        start = scratch["funcs"]["count_char"]
+        end = _offset(start, 3)
+
+        def df_at(addr):
+            return rpc(sock, "get_processor_context", {
+                "binary": binary, "address": addr, "register": "DF",
+            })["result"]["registers"]["DF"]
+
+        try:
+            result = rpc(sock, "set_processor_context", {
+                "binary": binary, "address": start, "end": end,
+                "register": "DF", "value": 1,
+            })["result"]
+            assert result["verified"] is True and result["value"] == 1
+            assert (df_at(start), df_at(end), df_at(_offset(end, 1))) == (1, 1, 0)
+        finally:
+            rpc(sock, "set_processor_context", {
+                "binary": binary, "address": start, "end": end,
+                "register": "DF", "value": 0,
+            })
+        assert (df_at(start), df_at(end)) == (0, 0)
+
+    def test_set_rejects_unknown_register(self, daemon, scratch):
+        rpc_error(daemon["sock"], "set_processor_context", {
+            "binary": scratch["name"], "address": scratch["funcs"]["count_char"],
+            "register": "NoSuchRegister", "value": 1,
+        })
+
+
+# ── decompile_all ─────────────────────────────────────────────────────────────
+
+class TestDecompileAll:
+    def test_pages_through_functions(self, daemon):
+        sock, binary = daemon["sock"], daemon["short_name"]
+        listed = rpc(sock, "functions", {"binary": binary})["result"]["functions"]
+
+        first = rpc(sock, "decompile_all", {"binary": binary, "limit": 3},
+                    timeout=_LOAD_TIMEOUT)["result"]
+        second = rpc(sock, "decompile_all", {"binary": binary, "limit": 3, "offset": 3},
+                     timeout=_LOAD_TIMEOUT)["result"]
+
+        # `functions` and `decompile_all` skip the same externals/thunks.
+        assert first["total"] == second["total"] == len(listed)
+        assert (first["count"], first["offset"]) == (3, 0)
+        assert (second["count"], second["offset"]) == (3, 3)
+        assert first["errors"] == second["errors"] == 0
+        # Pages follow function order and don't overlap.
+        assert [f["address"] for f in first["functions"] + second["functions"]] == [
+            f["address"] for f in listed[:6]]
+        for fn in first["functions"] + second["functions"]:
+            assert fn["c_code"].strip(), fn
+
+    def test_offset_past_the_end_returns_an_empty_page(self, daemon):
+        result = rpc(daemon["sock"], "decompile_all", {
+            "binary": daemon["short_name"], "offset": 10_000,
+        })["result"]
+        assert (result["count"], result["functions"], result["errors"]) == (0, [], 0)
+
+
+# ── function_diff / match_function ────────────────────────────────────────────
+
+class TestDiffAndMatch:
+    """Two identical copies of testapp, one optionally patched with ``assemble``."""
+
+    @staticmethod
+    def _diff(daemon, pair, mode):
+        a, b = pair
+        return rpc(daemon["sock"], "function_diff", {
+            "binary1": a["name"], "func1": "sum_array",
+            "binary2": b["name"], "func2": "sum_array", "mode": mode,
+        }, timeout=_LOAD_TIMEOUT)["result"]
+
+    @staticmethod
+    def _match(daemon, pair, **extra):
+        a, b = pair
+        return rpc(daemon["sock"], "match_function", {
+            "source_binary": a["name"], "func": "sum_array",
+            "target_binary": b["name"], **extra,
+        }, timeout=_LOAD_TIMEOUT)["result"]
+
+    @pytest.mark.parametrize("mode", ["decompile", "disassembly"])
+    def test_identical_copies_diff_clean(self, daemon, diff_pair, mode):
+        result = self._diff(daemon, diff_pair, mode)
+        assert result["mode"] == mode
+        assert result["is_identical"] is True, result["diff"]
+        assert result["func1_address"] == result["func2_address"]
+
+    def test_patched_constant_shows_up_in_both_modes_and_restoring_clears_it(
+            self, daemon, diff_pair):
+        sock, (_, b) = daemon["sock"], diff_pair
+        insn = next(i for i in _insns(daemon, b["name"], b["funcs"]["sum_array"], 12)
+                    if i["mnemonic"] == "MOV" and i["operands"].endswith(",0x0")
+                    and i["length"] >= 4)
+
+        try:
+            rpc(sock, "assemble", {
+                "binary": b["name"], "address": insn["address"],
+                "instructions": [f"MOV {insn['operands'][:-3]}0x5"],
+            })
+            dis = self._diff(daemon, diff_pair, "disassembly")
+            dec = self._diff(daemon, diff_pair, "decompile")
+            assert dis["is_identical"] is False and dec["is_identical"] is False
+            assert any(l.startswith("+") and "0x5" in l for l in dis["diff"].splitlines()), dis["diff"]
+            assert any(l.startswith("+") and "5" in l for l in dec["diff"].splitlines()), dec["diff"]
+        finally:
+            rpc(sock, "assemble", {
+                "binary": b["name"], "address": insn["address"],
+                "instructions": [_insn_text(insn)],
+            })
+        # The decompiler cache must follow the restore, not just the patch.
+        assert self._diff(daemon, diff_pair, "decompile")["is_identical"] is True
+        assert self._diff(daemon, diff_pair, "disassembly")["is_identical"] is True
+
+    def test_match_function_finds_the_same_function_in_the_other_copy(self, daemon, diff_pair):
+        result = self._match(daemon, diff_pair)
+
+        assert result["source"]["name"] == "sum_array"
+        assert result["count"] == len(result["candidates"]) > 0
+        best = result["candidates"][0]
+        assert best["address"] == diff_pair[1]["funcs"]["sum_array"]
+        assert best["similarity"] == pytest.approx(1.0)
+        # Candidates are ranked best-first.
+        sims = [c["similarity"] for c in result["candidates"]]
+        assert sims == sorted(sims, reverse=True)
+
+    def test_match_function_threshold_filters_candidates(self, daemon, diff_pair):
+        result = self._match(daemon, diff_pair, threshold=0.99)
+        assert result["candidates"]
+        assert all(c["similarity"] >= 0.99 for c in result["candidates"])
+
+    def test_both_binaries_still_work_after_match_function(self, daemon, diff_pair):
+        """match_function closes and reopens both programs internally; afterwards
+        reads and a write against each (an abort-wedged handle swallows writes)
+        must still work."""
+        sock = daemon["sock"]
+        self._match(daemon, diff_pair)
+
+        for copy in diff_pair:
+            assert rpc(sock, "functions", {"binary": copy["name"]})["result"]["functions"]
+            enum = f"PostMatchEnum_{uuid.uuid4().hex[:8]}"
+            rpc(sock, "create_enum", {
+                "binary": copy["name"], "name": enum, "values": [{"name": "X", "value": 1}],
+            })
+            found = rpc(sock, "list_data_types", {
+                "binary": copy["name"], "category": "enum", "query": enum,
+            })["result"]
+            assert found["count"] == 1, f"write after match_function lost on {copy['name']}"
+
+
+# ── goto (GUI-only) ───────────────────────────────────────────────────────────
+
+class TestGotoHeadless:
+    """The success path needs a GUI session; headless must say so clearly."""
+
+    def test_goto_explains_it_needs_gui_mode(self, daemon):
+        exc = rpc_error(daemon["sock"], "goto", {
+            "binary": daemon["short_name"], "target": daemon["main_name"],
+        })
+        assert "GUI mode" in str(exc)
