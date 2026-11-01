@@ -80,6 +80,14 @@
   the *next* successful write on the following save, even an unrelated write
   from a later command (see
   https://github.com/NationalSecurityAgency/ghidra/issues/9347).
+- GUI mode: `load` hung until someone clicked Ghidra's modal "Analyze now?"
+  dialog (shown when CodeBrowser opens an unanalyzed program). The imported
+  program is now flagged not to ask before it is saved and opened; analysis
+  still runs as part of `load`.
+- GUI mode: `stop` left the daemon running behind Ghidra's "Save Tool Changes?"
+  dialog when more than one binary had been loaded (each `load` opens its own
+  CodeBrowser). Duplicate tool instances are now marked unchanged before
+  shutdown.
 
 ## [0.2.0] - 2026-07-06
 

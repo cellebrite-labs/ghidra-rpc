@@ -163,6 +163,39 @@ def _setup_decompiler(program):
     return decompiler
 
 
+def _suppress_analyze_prompt(program) -> None:
+    """Keep CodeBrowser from asking "Analyze now?" when it opens ``program``.
+
+    That prompt is a modal dialog on the Swing thread: with nobody at the
+    keyboard it blocks every GUI-mode call until someone clicks it.  ``load``
+    runs analysis itself, so the prompt is redundant.  The flag is stored in
+    the program, so call this before saving the imported program.
+    """
+    from ghidra.program.util import GhidraProgramUtilities
+
+    mark = getattr(GhidraProgramUtilities, "markProgramNotToAskToAnalyze", None)
+    if mark is not None:
+        mark(program)
+
+
+def _clear_duplicate_tool_changes(tools) -> None:
+    """Mark running tools unchanged when several instances share a template.
+
+    Every ``load`` launches its own CodeBrowser.  Closing the project with more
+    than one changed instance of a tool makes Ghidra ask which one to save to
+    the tool chest, a modal dialog that stalls ``stop`` until someone answers
+    (its default answer is "None").  A single instance is saved silently, so
+    it is left alone.  Call on the Swing thread.
+    """
+    by_template: dict[str, list] = {}
+    for tool in tools:
+        by_template.setdefault(str(tool.getToolName()), []).append(tool)
+    for instances in by_template.values():
+        if len(instances) > 1:
+            for tool in instances:
+                tool.setConfigChanged(False)
+
+
 def _gen_unique_bin_name(binary_path: Path) -> str:
     """Generate a unique program name from a binary path (name + sha1 prefix)."""
     sha1 = hashlib.sha1()
@@ -684,7 +717,9 @@ class GuiContext:
             .load()
         )
         try:
-            domain_file = load_results.getPrimary().save(TaskMonitor.DUMMY)
+            primary = load_results.getPrimary()
+            _suppress_analyze_prompt(primary.getDomainObject())
+            domain_file = primary.save(TaskMonitor.DUMMY)
         finally:
             load_results.close()
 
@@ -823,7 +858,20 @@ class GuiContext:
             self.programs.clear()
         # Request GUI shutdown
         if hasattr(self.launcher, 'request_shutdown'):
+            self._clear_tool_prompts()
             self.launcher.request_shutdown()
+
+    def _clear_tool_prompts(self) -> None:
+        from ghidra.framework.main import AppInfo
+
+        def clear():
+            project = AppInfo.getActiveProject() or self.project
+            _clear_duplicate_tool_changes(project.getToolServices().getRunningTools())
+
+        try:
+            self.run_on_swing(clear)
+        except Exception:
+            logger.warning("Could not clear tool-changed flags before shutdown", exc_info=True)
 
 
 # A string _fmt_address() could have produced: "0x<hex>", optionally

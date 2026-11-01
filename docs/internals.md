@@ -222,6 +222,36 @@ registry file in tests. Any test that exercises `list-instances`/`stop --all` (o
 on the host. See `tests/test_session_registry.py`'s `isolate_registry` fixtures for the
 pattern.
 
+### 16. GUI-mode modal dialogs ("Analyze now?", "Save Tool Changes?")
+Ghidra's modal dialogs run on the Swing event thread; with nobody at the keyboard they
+stall the daemon until clicked. Two have been hit, both on Ghidra 12.0.4, 12.1 and 12.2.
+
+**"Analyze now?" on `load`.** Opening an unanalyzed program in CodeBrowser makes
+`AutoAnalysisPlugin.postProgramActivated` call `AutoAnalysisManager.askToAnalyze`, a
+modal dialog on the Swing event thread. With nobody at the keyboard it blocks every
+GUI-mode call (the daemon still answers `status`, but `load` and anything needing the
+EDT never return).
+
+`GhidraProgramUtilities.shouldAskToAnalyze(program)` is true only when the program can
+be saved, is not marked `Analyzed`, and its `Program Information` option
+`Should Ask To Analyze` is unset or true. `GuiContext.load_binary` calls
+`markProgramNotToAskToAnalyze` (sets that option to false, in its own transaction) on
+the freshly imported program *before* `Loaded.save()` and `launchDefaultTool`, so the
+flag is persisted with the program. It deliberately leaves the `Analyzed` flag alone.
+The call is guarded with `getattr`, so Ghidra builds without the method just skip it.
+
+**"Save Tool Changes?" on `stop`.** Each `load` launches a *new* CodeBrowser, so a
+session that loaded two binaries has `CodeBrowser` and `CodeBrowser(2)`.
+`ToolManagerImpl.saveSessionTools` (run when the front end closes the project) saves a
+lone changed instance silently, but for several instances of one tool it calls
+`saveToolSet`, which asks which one to save to the tool chest. `stop` returned
+`"stopped"` while the JVM lingered behind that dialog. `GuiContext.close` now calls
+`setConfigChanged(False)` on every instance of any tool template that has more than one
+running, on the Swing thread, right before `request_shutdown`. A single instance is left
+alone so its layout is still saved as before.
+
+To diagnose a hung GUI daemon: `jcmd <pid> Thread.print` and read `AWT-EventQueue-0`.
+
 ## Ghidra API Quick Reference
 
 Full javadoc: `$GHIDRA_INSTALL_DIR/docs/GhidraAPI_javadoc.zip`  

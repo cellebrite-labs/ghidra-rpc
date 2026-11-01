@@ -141,6 +141,9 @@ ghidra-rpc/
     │                              coverage for the Windows drive-letter path bug (gotcha 12)
     ├── test_address_format.py   — _fmt_address / _looks_like_address and _find_function's
     │                              address vs. bare-hex handling, with fakes (no Ghidra needed)
+    ├── test_gui_modal_dialogs.py — GUI mode never blocks on a Ghidra modal: load_binary flags
+    │                              the program not to ask "Analyze now?", close() clears the
+    │                              duplicate-CodeBrowser "Save Tool Changes?" (fakes; gotcha 14)
     ├── test_integration.py      — End-to-end integration tests against a real headless
     │                              Ghidra daemon loading tests/fixtures/testapp, covering
     │                              every API domain.  Skipped unless GHIDRA_INSTALL_DIR is
@@ -251,7 +254,7 @@ uv venv && uv pip install -e .
 ```bash
 python -m pytest tests/test_protocol.py tests/test_client.py tests/test_session_registry.py \
   tests/test_cli.py tests/test_search_decompiled.py tests/test_gui_context.py \
-  tests/test_address_format.py -v
+  tests/test_address_format.py tests/test_gui_modal_dialogs.py -v
 ```
 
 ### Running Integration Tests (requires Ghidra)
@@ -371,6 +374,24 @@ uv run ghidra-rpc decompile ls main
     first attempt. Diagnose with `tasklist /FI "IMAGENAME eq python.exe"` and
     `taskkill /F /PID <pid>` before assuming a fresh retry will behave any
     differently.
+
+14. **Ghidra's modal dialogs block the GUI daemon until a human clicks them**
+    (seen on Ghidra 12.0.4, 12.1 and 12.2). Two have been hit:
+    - *"Analyze now?"* — opening an unanalyzed program in a tool shows
+      `AutoAnalysisManager.askToAnalyze` on the Swing thread, and every GUI-mode
+      call hangs. `GuiContext.load_binary` therefore calls
+      `GhidraProgramUtilities.markProgramNotToAskToAnalyze` on the imported
+      program *before* saving it and launching the tool; `load` runs analysis
+      itself. Any new code path that opens a not-yet-analyzed program in a GUI
+      tool must do the same.
+    - *"Save Tool Changes?"* — each `load` launches its own CodeBrowser, and
+      closing the project with several changed instances of one tool asks which
+      to save (`ToolManagerImpl.saveToolSet`), so `stop` reported "stopped" but
+      the process lingered. `GuiContext.close` clears the changed flag on such
+      duplicate instances before requesting shutdown.
+
+    To diagnose a hung GUI daemon, `jcmd <pid> Thread.print` and look at
+    `AWT-EventQueue-0`.
 
 > For more detail on all gotchas plus the Ghidra API reference and session/daemon
 > internals, read **`docs/internals.md`**.
