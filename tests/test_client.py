@@ -14,10 +14,10 @@ from ghidra_rpc.client import DaemonError, DaemonNotRunning, send_request
 from ghidra_rpc.client import (
     _DEFAULT_SOCKET_TIMEOUT,
     _SOCKET_TIMEOUT_BUFFER,
-    _VERIFY_DECOMPILE_TIMEOUT,
     _derive_socket_timeout,
 )
 from ghidra_rpc import transport
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT, DOUBLE_DECOMPILE_COMMANDS
 
 
 class TestClient:
@@ -130,16 +130,12 @@ class TestDeriveSocketTimeout:
         result = _derive_socket_timeout("load", {"path": "/bin/ls", "analyze": False})
         assert result == _DEFAULT_SOCKET_TIMEOUT
 
-    @pytest.mark.parametrize("cmd", ["function_diff", "batch_edit_variables"])
+    @pytest.mark.parametrize("cmd", sorted(DOUBLE_DECOMPILE_COMMANDS))
     def test_double_decompile_commands_wait_for_both(self, cmd):
         assert _derive_socket_timeout(cmd, {"timeout": 100}) == 200 + _SOCKET_TIMEOUT_BUFFER
-        # Server default timeout (60 s) applies when the arg is absent.
-        assert _derive_socket_timeout(cmd, {}) == 120 + _SOCKET_TIMEOUT_BUFFER
-
-    @pytest.mark.parametrize("cmd", ["retype_variable", "rename_variable"])
-    def test_variable_edits_include_the_verify_decompile(self, cmd):
-        result = _derive_socket_timeout(cmd, {"timeout": 100})
-        assert result == 100 + _VERIFY_DECOMPILE_TIMEOUT + _SOCKET_TIMEOUT_BUFFER
+        # The server's default timeout applies when the arg is absent.
+        assert (_derive_socket_timeout(cmd, {})
+                == 2 * DEFAULT_DECOMPILE_TIMEOUT + _SOCKET_TIMEOUT_BUFFER)
 
 
 class TestSession:

@@ -15,6 +15,7 @@ Behavior against a real program is covered by tests/test_integration.py.
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from unittest.mock import MagicMock
 
@@ -29,6 +30,7 @@ from ghidra_rpc.server.tools.version_tracking import (
     _handle_function_diff,
     _normalise_decompiled,
     _normalise_disassembly,
+    _create_vt_session,
     _open_vt_programs,
 )
 
@@ -282,6 +284,71 @@ class TestOpenVtProgramsGuards:
         ctx.save_program.assert_not_called()
         pi.decompiler_pool.dispose.assert_not_called()
         assert ctx.programs == {"/a": pi}
+
+
+class _VtProgram:
+    def __init__(self):
+        self.releases = []
+
+    def release(self, consumer):
+        self.releases.append(consumer)
+
+
+class TestVtFailureRestoresPrograms:
+    """When version tracking fails after the daemon's handles were closed, the
+    programs must be released and reopened, not left missing from the daemon."""
+
+    @pytest.fixture
+    def restored(self, monkeypatch):
+        import ghidra_rpc.server.tools.version_tracking as vt
+        calls = []
+        monkeypatch.setattr(vt, "_restore_daemon_programs",
+                            lambda ctx, *names_keys: calls.append(names_keys))
+        return calls
+
+    def _headless_ctx(self, src_df, dst_df):
+        pi_src, pi_dst = MagicMock(name="pi_src"), MagicMock(name="pi_dst")
+        pi_src.name, pi_dst.name = "a", "b"
+        files = {"a": src_df, "b": dst_df}
+        project = MagicMock()
+        project.getProjectData.return_value.getRootFolder.return_value.getFile = files.get
+        return types.SimpleNamespace(
+            get_program={"a": pi_src, "b": pi_dst}.get,
+            save_program=lambda pi: None,
+            _programs_lock=threading.RLock(),
+            programs={"/a": pi_src, "/b": pi_dst},
+            project=project,
+        )
+
+    def test_second_open_failing_releases_the_first_and_restores(
+            self, fake_ghidra_util_task, restored):
+        src_prog = _VtProgram()
+        src_df, dst_df = MagicMock(), MagicMock()
+        src_df.getDomainObject.return_value = src_prog
+        dst_df.getDomainObject.side_effect = RuntimeError("locked")
+        ctx = self._headless_ctx(src_df, dst_df)
+
+        with pytest.raises(RuntimeError, match="locked"):
+            _open_vt_programs(ctx, "a", "b", "vt")
+
+        assert src_prog.releases == ["vt"]
+        assert restored == [("a", "b", "/a", "/b")]
+
+    def test_session_creation_failing_releases_both_and_restores(
+            self, monkeypatch, restored):
+        db = types.ModuleType("ghidra.feature.vt.api.db")
+        db.VTSessionDB = types.SimpleNamespace(
+            createVTSession=MagicMock(side_effect=RuntimeError("vt failed")))
+        for name in ("ghidra", "ghidra.feature", "ghidra.feature.vt", "ghidra.feature.vt.api"):
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+        monkeypatch.setitem(sys.modules, "ghidra.feature.vt.api.db", db)
+        src, dst = _VtProgram(), _VtProgram()
+
+        with pytest.raises(RuntimeError, match="vt failed"):
+            _create_vt_session(object(), "s", src, dst, "vt", "a", "b", "/a", "/b")
+
+        assert src.releases == ["vt"] and dst.releases == ["vt"]
+        assert restored == [("a", "b", "/a", "/b")]
 
 
 # ── goto (GUI-only) ───────────────────────────────────────────────────────────

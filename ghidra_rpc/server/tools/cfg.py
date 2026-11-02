@@ -11,6 +11,7 @@ from __future__ import annotations
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools._common import _decompile_high, _find_function
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT
 
 
 def _handle_basic_blocks(ctx, args: dict) -> dict:
@@ -154,7 +155,7 @@ def _handle_pcode(ctx, args: dict) -> dict:
     binary    = args.get("binary", "")
     func_name = args.get("func", "")
     high      = bool(args.get("high", False))
-    timeout   = int(args.get("timeout", 60))
+    timeout   = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
     limit     = min(int(args.get("limit", 1000)), 10000)
 
     if not func_name:

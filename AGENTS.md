@@ -56,6 +56,10 @@ ghidra-rpc/
 │   │                       CPython exposes no AF_UNIX).  listen()/connect() return
 │   │                       the auth token, None on POSIX.  Also owns
 │   │                       endpoint_directory() and windows_state_dir().
+│   ├── timeouts.py       — Decompile budgets shared by handlers and client.py
+│   │                       (DEFAULT_DECOMPILE_TIMEOUT, DOUBLE_DECOMPILE_COMMANDS);
+│   │                       the client sizes its wait from them, so keep them in
+│   │                       sync with what each handler actually decompiles
 │   │
 │   └── server/           — Daemon internals (runs inside Ghidra's JVM via pyghidra)
 │       ├── __init__.py

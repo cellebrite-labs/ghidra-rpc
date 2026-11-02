@@ -8,6 +8,7 @@ import time
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools._common import _decompile
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT
 
 logger = logging.getLogger("ghidra-rpc.vt")
 
@@ -566,7 +567,7 @@ def _handle_decompile_all(ctx, args: dict) -> dict:
     function.  Skips external and thunk functions.
     """
     binary = args.get("binary", "")
-    timeout = int(args.get("timeout", 60))
+    timeout = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
     limit = args.get("limit")
     if limit is not None:
         limit = int(limit)
@@ -660,7 +661,7 @@ def _handle_function_diff(ctx, args: dict) -> dict:
     func1 = args.get("func1", "")
     binary2 = args.get("binary2", "")
     func2 = args.get("func2", "")
-    timeout = int(args.get("timeout", 60))
+    timeout = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
     mode = args.get("mode", "decompile")
 
     if mode not in ("decompile", "disassembly"):

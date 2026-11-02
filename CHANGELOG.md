@@ -59,11 +59,17 @@
 
 ### Fixed
 
+- `set-equate` VALUE and `create-enum` VALUEs accept negative numbers (`-1`,
+  `-0x10`); Click rejected them as unknown options. A mistyped option on
+  these commands is still reported as `No such option`.
+- `retype-variable`/`rename-variable` verify with the `--timeout` decompile
+  budget instead of a fixed 30 s, so a slow function no longer reports
+  `verified: false` for an edit that applied.
 - The CLI no longer gives up on long-running commands while the daemon is
   still working: `load` without `--analysis-timeout` waits for analysis to
   finish (was 120 s); `function-diff` and `batch-edit-variable` wait for both
-  of their decompiles; `retype-variable`/`rename-variable` include their
-  verify decompile.
+  of their decompiles, as do `retype-variable`/`rename-variable` (edit plus
+  verify).
 - `version-track` and `match-function` reject the same binary as both source
   and destination, and are rejected in GUI mode, instead of dropping the
   binary from the daemon until it is re-`load`ed. A failure while opening the
@@ -75,7 +81,11 @@
   which stacked an unreleased Ghidra consumer each time.
 - **Breaking:** `set-comment`/`batch-set-comment` follow the 0x-prefix rule: a function
   named like hex (`add`, `cafe`) is resolved by name, not taken as address
-  `0xadd`. Bare hex is now a name query, as in every other command.
+  `0xadd`. Bare hex is now a name query, as in every other command. A name
+  that matches no function now also resolves as a label, as in `xrefs-to`.
+- `xrefs-to`/`xrefs-from`/`list-vtable`/`set-comment` keep the function
+  lookup's error when a name resolves to nothing, so an ambiguous name lists
+  its candidates instead of "Cannot resolve target".
 - Argument errors found after option parsing now use the JSON error envelope
   with exit code 2, like other usage errors. Before, a malformed
   `--json-file` on `batch-rename`/`batch-set-comment`/`batch-edit-variable`

@@ -7,13 +7,14 @@ import re
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools._common import _decompile, _find_function  # _find_function is re-exported
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
     """Decompile a function and return its pseudo-C code."""
     binary = args.get("binary", "")
     func_name = args.get("func", "")
-    timeout = args.get("timeout", 60)
+    timeout = args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT)
 
     if not func_name:
         raise ValueError("Missing required argument: func")
@@ -94,7 +95,7 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
     ignore_case   = bool(args.get("ignore_case", True))
     limit         = int(args.get("limit", 50))
     max_functions = int(args.get("max_functions", 5000))
-    timeout       = int(args.get("timeout", 60))
+    timeout       = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
 
     if not binary:
         raise ValueError("Missing required argument: binary")

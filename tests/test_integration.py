@@ -1480,6 +1480,18 @@ class TestDataTypes:
         assert val_map.get("FIRST")  == 10
         assert val_map.get("SECOND") == 20
 
+    def test_create_enum_negative_values(self, daemon):
+        """Error-code enums need negative values (the CLI passes `-1` through)."""
+        name = f"NegEnum_{uuid.uuid4().hex[:8]}"
+        result = rpc(daemon["sock"], "create_enum", {
+            "binary": daemon["short_name"],
+            "name":   name,
+            "values": [{"name": "FAIL", "value": -1}, {"name": "OK", "value": 0}],
+            "size": 4,
+        })["result"]
+        val_map = {v["name"]: v["value"] for v in result["values"]}
+        assert val_map == {"FAIL": -1, "OK": 0}
+
     def test_failed_write_does_not_wedge_next_write(self, daemon):
         """A write that aborts mid-transaction must not corrupt the next write.
 

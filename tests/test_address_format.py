@@ -151,23 +151,46 @@ class TestFindFunction:
             _find(pi, "helper")
 
 
-def _comment_addr(pi, target):
-    from ghidra_rpc.server.tools.modifications import _resolve_comment_address
-    return _resolve_comment_address(pi, target)
+def _resolve(pi, target):
+    from ghidra_rpc.server.tools._common import _resolve_address
+    return _resolve_address(pi, target)
 
 
-class TestResolveCommentAddress:
+def _symbol(name, addr):
+    sym = MagicMock()
+    sym.getName.return_value = name
+    sym.getAddress.return_value = addr
+    addr.getAddressSpace.return_value.isExternalSpace.return_value = False
+    return sym
+
+
+class TestResolveAddress:
+    """_resolve_address backs set-comment, xrefs-to/from and list-vtable."""
+
     def test_hex_looking_function_name_is_a_name_not_an_address(self):
         add = _func("add")
         pi = _pi([add])
-        assert _comment_addr(pi, "add") is add.getEntryPoint.return_value
+        assert _resolve(pi, "add") is add.getEntryPoint.return_value
         pi.program.getAddressFactory.return_value.getAddress.assert_not_called()
 
     def test_0x_address_is_used_exactly(self):
         pi = _pi([_func("add")])
-        addr = _comment_addr(pi, "0x00401005")
+        addr = _resolve(pi, "0x00401005")
         factory = pi.program.getAddressFactory.return_value
         factory.getAddress.assert_called_with("0x00401005")
         assert addr is factory.getAddress.return_value
         # Not snapped to a containing function's entry point.
         pi.program.getFunctionManager.return_value.getFunctionContaining.assert_not_called()
+
+    def test_label_name_falls_back_to_the_symbol(self):
+        label_addr = MagicMock()
+        pi = _pi([_func("main")])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("g_config", label_addr)]
+        assert _resolve(pi, "g_config") is label_addr
+
+    def test_unresolved_ambiguous_name_keeps_the_candidate_list(self):
+        pi = _pi([_func("helper_a"), _func("helper_b")])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = []
+        with pytest.raises(ValueError, match=r"Ambiguous function name 'helper'.*@ 0x"):
+            _resolve(pi, "helper")

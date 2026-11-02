@@ -196,7 +196,7 @@ which binary it came from.
 | `ghidra-rpc rename-function <binary> <target> <new_name> [--namespace NS]` | Rename function; `--namespace` moves it into a namespace | `{address, old_name, new_name, verified[, old_namespace, new_namespace]}` |
 | `ghidra-rpc rename-symbol <binary> <address> <new_name> [--create]` | Rename symbol; `--create` makes a new label if none exists | `{address, old_name, new_name, created, verified}` |
 | `ghidra-rpc create-label <binary> <address> <name>` | Create-or-rename a label at any address (upsert) | `{address, name, old_name, action, created, verified}` |
-| `ghidra-rpc set-comment <binary> <address> --comment <text> [--type TYPE]` | Set comment at a `0x` address, or at a function's entry if given its name (comment text is `--comment`, matching `set-bookmark`) | `{address, comment_type, comment, verified}` |
+| `ghidra-rpc set-comment <binary> <address> --comment <text> [--type TYPE]` | Set comment at a `0x` address, or at a function or label given by name (comment text is `--comment`, matching `set-bookmark`) | `{address, comment_type, comment, verified}` |
 | `ghidra-rpc batch-rename <binary> --json \|--json-file FILE [--mode function\|label]` | Rename 40+ functions/labels in one transaction; per-item error reporting | `{results:[{ok, index, address, old_name, new_name}], count, ok_count, error_count}` |
 | `ghidra-rpc batch-set-comment <binary> --json \|--json-file FILE` | Set comments at many addresses in one transaction | `{results:[{ok, index, address, comment_type, comment}], count, ok_count, error_count}` |
 | `ghidra-rpc set-signature <binary> <target> <signature>` | Set function signature | `{address, old_signature, new_signature, verified}` |

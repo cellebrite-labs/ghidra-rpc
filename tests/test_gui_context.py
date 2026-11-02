@@ -167,7 +167,7 @@ def gui(monkeypatch):
     ctx.project = None
 
     ctx._init_program_info = lambda program: SimpleNamespace(
-        program=program, decompiler_pool=_FakePool())
+        name=program.path, program=program, decompiler_pool=_FakePool())
     return ctx, world
 
 
@@ -227,3 +227,19 @@ class TestRefreshPrograms:
 
         assert df.opens == 2
         assert ctx.programs["/app"].program is df.program
+
+    def test_close_releases_programs_it_opened(self, gui):
+        ctx, world = gui
+        own = _FakeProgram("/app")
+        world.files["/app"] = _FakeDomainFile("/app", own)
+        tool_copy = _FakeProgram("/tool")
+        world.tool_programs["/tool"] = tool_copy
+        ctx.refresh_programs()
+        ctx.save_program = lambda pi: None
+        ctx.launcher = SimpleNamespace()   # no GUI shutdown to request
+
+        ctx.close()
+
+        assert own.releases == ["ghidra-rpc"]
+        assert tool_copy.releases == []    # the tool owns its copy
+        assert ctx._own_programs == {} and ctx.programs == {}

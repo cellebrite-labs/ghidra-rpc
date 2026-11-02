@@ -16,10 +16,12 @@ from ghidra_rpc.server.tools._common import (
     _decompile_high,
     _find_function,
     _maybe_swing,
+    _resolve_address,
     _resolve_data_type,
     _resolve_namespace,
     ghidra_transaction,
 )
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT
 
 
 def _handle_create_label(ctx, args: dict) -> dict:
@@ -204,22 +206,8 @@ def _handle_rename_symbol(ctx, args: dict) -> dict:
     return _commit(ctx, pi, do_rename)
 
 
-def _resolve_comment_address(pi, target: str):
-    """Resolve a set-comment target: a 0x address as-is, else a function name.
-
-    Follows _find_function's rule that only 0x-prefixed input is an address,
-    so a function named e.g. ``add`` or ``cafe`` is not taken for 0xadd.
-    An address is used exactly (not snapped to its containing function).
-    """
-    from ghidra_rpc.server.context import _looks_like_address, _parse_address
-
-    if _looks_like_address(target):
-        return _parse_address(pi.program, target)
-    return _find_function(pi, target).getEntryPoint()
-
-
 def _handle_set_comment(ctx, args: dict) -> dict:
-    """Set a comment at an address or function."""
+    """Set a comment at a 0x address, or at a function or label by name."""
     binary = args.get("binary", "")
     address = args.get("address", "")
     comment = args.get("comment", "")
@@ -241,7 +229,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
                 f"Use one of: {list(type_map.keys())}"
             )
 
-        addr = _resolve_comment_address(pi, address)
+        addr = _resolve_address(pi, address)
 
         with ghidra_transaction(pi.program, f"ghidra-rpc: set {ct} comment @ {addr}"):
             pi.program.getListing().setComment(addr, ghidra_ct, comment)
@@ -450,7 +438,7 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     func_name     = args.get("func", "")
     variable_name = args.get("variable", "")
     type_str      = args.get("data_type", "")
-    timeout       = int(args.get("timeout", 60))
+    timeout       = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
 
     if not func_name:
         raise ValueError("Missing required argument: func")
@@ -488,7 +476,7 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     verified = False
     actual_type = str(new_type.getName())
     try:
-        result2 = _decompile(pi, func, 30)
+        result2 = _decompile(pi, func, timeout)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -519,7 +507,7 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
     func_name     = args.get("func", "")
     variable_name = args.get("variable", "")
     new_name      = args.get("new_name", "")
-    timeout       = int(args.get("timeout", 60))
+    timeout       = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
 
     if not func_name:
         raise ValueError("Missing required argument: func")
@@ -553,7 +541,7 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
     # Read back via a fresh decompilation to verify the change took effect.
     verified = False
     try:
-        result2 = _decompile(pi, func, 30)
+        result2 = _decompile(pi, func, timeout)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -609,7 +597,7 @@ def _handle_batch_edit_variables(ctx, args: dict) -> dict:
     binary     = args.get("binary", "")
     func_name  = args.get("func", "")
     operations = args.get("operations", [])
-    timeout    = int(args.get("timeout", 60))
+    timeout    = int(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
 
     if not func_name:
         raise ValueError("Missing required argument: func")
@@ -1406,7 +1394,7 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
                 continue
 
             try:
-                addr = _resolve_comment_address(pi, address)
+                addr = _resolve_address(pi, address)
                 resolved.append((idx, addr, comment, ghidra_ct, ct_name))
             except Exception as e:
                 results[idx] = {

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ghidra_rpc import session as session_mod
 from ghidra_rpc import transport
+from ghidra_rpc.timeouts import DEFAULT_DECOMPILE_TIMEOUT, DOUBLE_DECOMPILE_COMMANDS
 
 
 class DaemonNotRunning(Exception):
@@ -36,18 +37,6 @@ _DEFAULT_SOCKET_TIMEOUT: float = 120.0
 # to serialise and send its response after the operation itself completes.
 _SOCKET_TIMEOUT_BUFFER: float = 30.0
 
-# Server-side default for the per-decompile ``timeout`` arg when it is absent.
-_SERVER_DECOMPILE_TIMEOUT: float = 60.0
-
-# Fixed timeout of the read-back decompile retype/rename_variable run to verify.
-_VERIFY_DECOMPILE_TIMEOUT: float = 30.0
-
-# Commands that run two full decompiles, each with the ``timeout`` arg.
-_DOUBLE_DECOMPILE_CMDS = ("function_diff", "batch_edit_variables")
-
-# Commands that run one decompile with ``timeout`` plus a fixed verify pass.
-_DECOMPILE_AND_VERIFY_CMDS = ("retype_variable", "rename_variable")
-
 
 def _derive_socket_timeout(cmd: str, args: dict | None) -> float | None:
     """Return the appropriate socket timeout for a request.
@@ -58,10 +47,8 @@ def _derive_socket_timeout(cmd: str, args: dict | None) -> float | None:
 
     * ``load`` with analysis and no ``analysis_timeout`` -> ``None`` (no
       limit), since the server runs analysis to completion.
-    * Commands that decompile twice (``function_diff``,
-      ``batch_edit_variables``) -> ``2 * timeout + buffer``.
-    * ``retype_variable`` / ``rename_variable`` -> ``timeout`` plus their
-      fixed verify decompile plus the buffer.
+    * Commands that decompile twice (``timeouts.DOUBLE_DECOMPILE_COMMANDS``)
+      -> ``2 * timeout + buffer``.
     * Otherwise, if ``args`` has ``timeout``/``analysis_timeout``,
       ``max(those values) + _SOCKET_TIMEOUT_BUFFER``; else
       ``_DEFAULT_SOCKET_TIMEOUT`` (120 s).
@@ -70,12 +57,9 @@ def _derive_socket_timeout(cmd: str, args: dict | None) -> float | None:
     if (cmd == "load" and args.get("analyze", True)
             and args.get("analysis_timeout") is None):
         return None
-    if cmd in _DOUBLE_DECOMPILE_CMDS:
-        timeout = float(args.get("timeout", _SERVER_DECOMPILE_TIMEOUT))
+    if cmd in DOUBLE_DECOMPILE_COMMANDS:
+        timeout = float(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
         return 2 * timeout + _SOCKET_TIMEOUT_BUFFER
-    if cmd in _DECOMPILE_AND_VERIFY_CMDS:
-        timeout = float(args.get("timeout", _SERVER_DECOMPILE_TIMEOUT))
-        return timeout + _VERIFY_DECOMPILE_TIMEOUT + _SOCKET_TIMEOUT_BUFFER
     timeouts = [
         float(args[k])
         for k in _TIMEOUT_ARG_KEYS

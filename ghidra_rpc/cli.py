@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -415,7 +416,8 @@ def list_instances(include_dead: bool):
 # All other commands are dispatched to the daemon via the RPC protocol.
 
 def _daemon_command(name: str, rpc_cmd: str | None = None, *,
-                    binary: bool = True, socket_timeout: bool = False):
+                    binary: bool = True, socket_timeout: bool = False,
+                    negative_values: bool = False):
     """Register a CLI subcommand that forwards to daemon command *rpc_cmd*.
 
     The decorated function takes its own Click params and returns the args
@@ -428,6 +430,11 @@ def _daemon_command(name: str, rpc_cmd: str | None = None, *,
       arg (only when ``socket_timeout=True``);
     - a trailing ``--project/-p`` option, resolved only after the function
       returns so its own usage errors take precedence.
+
+    ``negative_values=True`` lets positional values like ``-1`` through
+    (Click would otherwise reject them as unknown options); the command must
+    then reject option-looking tokens itself, via ``_reject_option``,
+    so a mistyped option can't become a name.
     """
     rpc_cmd = rpc_cmd or name.replace("-", "_")
 
@@ -456,7 +463,8 @@ def _daemon_command(name: str, rpc_cmd: str | None = None, *,
         if binary:
             params.append(click.Argument(["binary"]))
         callback.__click_params__ = params
-        return cli.command(name=name)(callback)
+        settings = {"ignore_unknown_options": True} if negative_values else {}
+        return cli.command(name=name, context_settings=settings)(callback)
 
     return decorator
 
@@ -494,6 +502,14 @@ def _parse_int(value: str, param_hint: str) -> int:
     except click.BadParameter as e:
         e.param_hint = param_hint
         raise
+
+
+def _reject_option(token: str) -> None:
+    """Fail on an option-looking token that isn't a number, for commands
+    registered with ``negative_values=True`` (where Click passes unknown
+    options through as arguments)."""
+    if token.startswith("-") and not re.fullmatch(r"-(0[xX][0-9a-fA-F]+|\d+)", token):
+        raise click.NoSuchOption(token)
 
 
 def _parse_pairs(tokens: tuple, label: str, keys: tuple[str, str]) -> list[dict]:
@@ -710,7 +726,7 @@ def rename_symbol(address: str, new_name: str, create: bool):
 @click.option("--comment", required=True, help="Comment text.")
 @click.option("--type", "comment_type", type=click.Choice(["plate", "pre", "post", "eol", "repeatable"]), default="eol")
 def set_comment(address: str, comment: str, comment_type: str):
-    """Set a comment at an address (0x-prefixed) or a function's entry (by name)."""
+    """Set a comment at an address (0x-prefixed), or at a function or label by name."""
     return {"address": address, "comment": comment, "comment_type": comment_type}
 
 
@@ -1096,7 +1112,7 @@ def modify_struct(
     )}
 
 
-@_daemon_command("create-enum")
+@_daemon_command("create-enum", negative_values=True)
 @click.argument("enum_name")
 @click.argument("values", nargs=-1, required=False)
 @click.option(
@@ -1128,6 +1144,8 @@ def create_enum(
     set-data-type. Use --if-not-exists for idempotent scripts, --or-replace
     to rebuild it from scratch.
     """
+    for token in values:
+        _reject_option(token)
     value_list = _parse_pairs(values, "VALUES", ("name", "value"))
     for entry in value_list:
         entry["value"] = _parse_int(entry["value"], "'VALUES'")
@@ -1137,7 +1155,7 @@ def create_enum(
     }
 
 
-@_daemon_command("set-equate")
+@_daemon_command("set-equate", negative_values=True)
 @click.argument("address")
 @click.argument("equate_name")
 @click.argument("value", type=HEX_INT)
@@ -1167,6 +1185,7 @@ def set_equate(
     Example - tag the immediate in "CMP AX, 0x81" with ExceptionNumbers entry:
       ghidra-rpc set-equate binary 0x004010b4 _FPE_INVALID 0x81 --enum-path ExceptionNumbers
     """
+    _reject_option(equate_name)
     return {
         "address": address, "equate_name": equate_name, "value": value,
         "operand_index": operand_index, "enum_path": enum_path,

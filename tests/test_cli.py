@@ -263,3 +263,54 @@ class TestDisassembleWithInstructions:
         )
         assert result.exit_code == 0
         assert captured["args"]["with_instructions"] is True
+
+
+class TestNegativeValues:
+    """set-equate VALUE and create-enum NAME VALUE pairs accept negative numbers
+    (error codes like -1), which Click would otherwise parse as options, while
+    a mistyped option still fails instead of becoming a name."""
+
+    def _invoke(self, monkeypatch, capsys, argv):
+        captured = {}
+
+        def fake_rpc_command(gpr, cmd, args, socket_timeout=None):
+            captured["args"] = args
+
+        import ghidra_rpc.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_rpc_command", fake_rpc_command)
+        monkeypatch.setattr(cli_mod, "_resolve_project", lambda p: "P")
+        monkeypatch.setattr(sys, "argv", ["ghidra-rpc"] + argv)
+        try:
+            main()
+        except SystemExit as e:
+            return e.code, captured, capsys.readouterr().out
+        return 0, captured, capsys.readouterr().out
+
+    def test_set_equate_negative_value(self, monkeypatch, capsys):
+        code, captured, _ = self._invoke(monkeypatch, capsys, [
+            "set-equate", "bin", "0x10", "ERR_FAIL", "-1", "--operand-index", "2"])
+        assert code == 0
+        assert captured["args"]["value"] == -1
+        assert captured["args"]["operand_index"] == 2
+
+    def test_create_enum_negative_values(self, monkeypatch, capsys):
+        code, captured, _ = self._invoke(monkeypatch, capsys, [
+            "create-enum", "bin", "Status", "FAIL", "-1", "BAD", "-0x10", "OK", "0",
+            "--size", "4"])
+        assert code == 0
+        assert captured["args"]["values"] == [
+            {"name": "FAIL", "value": -1}, {"name": "BAD", "value": -16},
+            {"name": "OK", "value": 0}]
+        assert captured["args"]["size"] == 4
+
+    @pytest.mark.parametrize("argv", [
+        ["set-equate", "bin", "0x10", "--typo", "5"],
+        ["create-enum", "bin", "Status", "FAIL", "-1", "--siz", "4"],
+        ["create-enum", "bin", "Status", "FAIL", "1", "--if-not-exist"],
+    ])
+    def test_mistyped_option_is_still_a_json_usage_error(self, monkeypatch, capsys, argv):
+        code, captured, out = self._invoke(monkeypatch, capsys, argv)
+        assert code == 2
+        assert captured == {}
+        data = json.loads(out)
+        assert data["ok"] is False and "No such option" in data["message"]

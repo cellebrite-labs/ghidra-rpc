@@ -95,13 +95,30 @@ error message.
 
 ## Connection Timeout
 
-**Symptom**: Commands hang for 2 minutes then fail.
+**Symptom**: A command fails with `TimeoutError` after waiting, or other commands block
+behind it.
 
 **Cause**: The daemon is processing a heavy operation (large binary analysis, decompilation
-of a very complex function).
+of a very complex function) and runs one command at a time. The CLI waits for the
+command's own budget (`--timeout`, `--analysis-timeout`, `--socket-timeout`) plus 30 s, or
+120 s for commands without one.
 
-**Fix**: Wait for the operation to complete. For initial analysis of large binaries, this
-can take several minutes. You can check the daemon's stderr log for progress.
+**Fix**: Wait for the operation to complete, or raise that command's timeout option. For
+initial analysis of large binaries, this can take several minutes; check the daemon log
+for progress.
+
+## `load` Never Returns
+
+**Symptom**: `load` without `--analysis-timeout` keeps waiting.
+
+**Cause**: Without `--analysis-timeout`, `load` waits for auto-analysis to finish however
+long it takes. In GUI mode it can also be stuck behind a Ghidra modal dialog that is
+waiting for a click.
+
+**Fix**: For large binaries pass `--analysis-timeout SECS`. In GUI mode, look for an open
+dialog in Ghidra; to confirm, run `jcmd <daemon-pid> Thread.print` and check what
+`AWT-EventQueue-0` is blocked on (`ghidra-rpc list-instances` shows the pid, even while
+`load` is still running).
 
 ## "Binary not found" After Restart
 
