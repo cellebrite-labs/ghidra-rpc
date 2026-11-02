@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
+from ghidra_rpc.server.tools._common import _resolve_address
 from ghidra_rpc.server.tools.memory import resolve_target_name
-from ghidra_rpc.server.tools.xrefs import _resolve_address
 
 # Hard cap on auto-terminated vtable walks (defensive; real vtables are small).
 _VTABLE_HARD_CAP = 4096

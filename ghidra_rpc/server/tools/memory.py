@@ -289,7 +289,7 @@ def _handle_write_bytes(ctx, args: dict) -> dict:
     automatically, and ``disassemble`` only reads the listing.
     """
     from ghidra_rpc.server.context import _parse_address
-    from ghidra_rpc.server.tools.modifications import (
+    from ghidra_rpc.server.tools._common import (
         _commit,
         ghidra_transaction,
     )

@@ -205,7 +205,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
         instructions -- list of resulting instructions (same format as disassemble)
     """
     from ghidra_rpc.server.context import _parse_address
-    from ghidra_rpc.server.tools.modifications import (
+    from ghidra_rpc.server.tools._common import (
         _commit,
         ghidra_transaction,
     )

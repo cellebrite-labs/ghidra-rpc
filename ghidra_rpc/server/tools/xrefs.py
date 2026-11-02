@@ -2,43 +2,9 @@
 
 from __future__ import annotations
 
-from ghidra_rpc.server.context import _fmt_address, _looks_like_address, _parse_address
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
-
-
-def _resolve_address(pi, target: str):
-    """Resolve a target (function name or hex address) to a Ghidra Address."""
-    prog = pi.program
-
-    if _looks_like_address(target):
-        return _parse_address(prog, target)
-
-    # Try as function
-    try:
-        func = _find_function(pi, target)
-        return func.getEntryPoint()
-    except ValueError:
-        pass
-
-    # Try as symbol — prefer non-external (e.g. PLT thunk) over EXTERNAL space symbols.
-    # In ELF binaries an imported function like 'malloc' has both a PLT thunk at a real
-    # code address AND an entry in the EXTERNAL address space.  Callers reference the PLT
-    # thunk, so we must prefer that address for xref lookups.
-    st = prog.getSymbolTable()
-    external_fallback = None
-    for sym in st.getAllSymbols(False):
-        if str(sym.getName()).lower() == target.lower():
-            addr = sym.getAddress()
-            if not addr.getAddressSpace().isExternalSpace():
-                return addr  # non-external (PLT thunk / IAT entry) — use immediately
-            if external_fallback is None:
-                external_fallback = addr
-
-    if external_fallback is not None:
-        return external_fallback
-
-    raise ValueError(f"Cannot resolve target '{target}' to an address.")
+from ghidra_rpc.server.tools._common import _find_function, _resolve_address  # also re-exported
 
 
 def _collect_xrefs_at(pi, addr, limit: int) -> list[dict]:

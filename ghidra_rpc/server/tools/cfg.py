@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
+from ghidra_rpc.server.tools._common import _find_function
 
 
 def _handle_basic_blocks(ctx, args: dict) -> dict:

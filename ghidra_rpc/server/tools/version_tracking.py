@@ -405,7 +405,7 @@ def _handle_match_function(ctx, args: dict) -> dict:
         )
 
     # Resolve the source function using the daemon's reference (for name lookup)
-    from ghidra_rpc.server.tools.decompiler import _find_function
+    from ghidra_rpc.server.tools._common import _find_function
     pi_src_daemon = ctx.get_program(source_binary)
     src_func = _find_function(pi_src_daemon, func_name)
     src_func_name = str(src_func.getName())
@@ -640,7 +640,7 @@ def _handle_function_diff(ctx, args: dict) -> dict:
             "Missing required arguments: binary1, func1, binary2, func2"
         )
 
-    from ghidra_rpc.server.tools.decompiler import _find_function
+    from ghidra_rpc.server.tools._common import _find_function
 
     pi1 = ctx.get_program(binary1)
     pi2 = ctx.get_program(binary2)

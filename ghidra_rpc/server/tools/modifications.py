@@ -6,163 +6,18 @@ Ghidra API calls go through Swing.runNow() for thread safety.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
-
-
-@contextmanager
-def ghidra_transaction(program, description: str):
-    """Context manager for Ghidra transactions. Ensures proper commit/rollback.
-
-    A short sleep after ``endTransaction`` prevents the intermittent
-    ``IllegalStateException: No transaction is open`` that occurs when
-    consecutive write commands are issued rapidly.  Ghidra's transaction
-    machinery posts commit notifications asynchronously; without the sleep the
-    next ``startTransaction`` can race with those notifications.
-    """
-    import time as _time
-    tx_id = program.startTransaction(description)
-    committed = False
-    try:
-        yield
-        committed = True
-    finally:
-        program.endTransaction(tx_id, committed)
-        # Brief yield so Ghidra can finish posting commit events before the
-        # next transaction opens.  Eliminates the ~20% failure rate seen when
-        # back-to-back write commands arrive without any inter-command delay.
-        _time.sleep(0.05)
-
-
-def _maybe_swing(ctx, fn):
-    """Run fn on Swing EDT if the context is GUI mode, else run directly."""
-    if hasattr(ctx, "run_on_swing"):
-        return ctx.run_on_swing(fn)
-    return fn()
-
-
-def _commit(ctx, pi, fn, invalidate: bool = True):
-    """Run write *fn* via ``_maybe_swing``, then flush the decompiler cache
-    and save the program. Returns *fn*'s result.
-
-    Pass ``invalidate=False`` only for writes the decompiler never reads
-    (bookmarks, tags, namespaces).  A helper rather than a decorator so a
-    handler can decompile off the EDT before committing.
-    """
-    result = _maybe_swing(ctx, fn)
-    if invalidate:
-        pi.decompiler_pool.invalidate_all()
-    ctx.save_program(pi)
-    return result
-
-
-# ── Data-type resolution ──────────────────────────────────────────────────────
-
-def _resolve_data_type(program, type_str: str):
-    """Resolve a type-name string to a Ghidra DataType.
-
-    Supports (all work in headless and GUI mode):
-    - Built-in aliases: ``byte``, ``char``, ``int``, ``uint``, ``string``, …
-    - Pointer decoration: ``char *``, ``void *``, ``int **``, …
-    - Array decoration:  ``char[11]``, ``int[4]``, …
-    - DTM lookup by name or full path: any type already in the program's
-      data type manager (structs, enums, typedefs, …)
-
-    Note: Ghidra's DataTypeParser requires a GUI DataTypeQueryService so it
-    cannot be used in headless mode. This function implements the common cases
-    directly via the Ghidra data-model API.
-    """
-    import re as _re
-    t = type_str.strip()
-
-    # ---- pointer: strip trailing '*', resolve base recursively ---------------
-    if t.endswith("*"):
-        base_dt = _resolve_data_type(program, t[:-1].strip())
-        from ghidra.program.model.data import PointerDataType
-        return PointerDataType(base_dt, program.getDataTypeManager())
-
-    # ---- array: e.g. "char[11]" or "int [4]" ---------------------------------
-    m = _re.fullmatch(r"(.+?)\s*\[(\d+)\]", t)
-    if m:
-        base_dt = _resolve_data_type(program, m.group(1).strip())
-        count = int(m.group(2))
-        from ghidra.program.model.data import ArrayDataType
-        return ArrayDataType(base_dt, count)
-
-    # ---- string / unicode aliases (variable-length, scanned to null) ---------
-    if t.lower() in ("string", "cstring", "c_string", "terminated_string"):
-        for cls_name in ("TerminatedCStringDataType", "StringDataType"):
-            try:
-                mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-                cls = getattr(mod, cls_name)
-                return getattr(cls, "dataType", cls())
-            except Exception:
-                pass
-
-    if t.lower() in ("unicode", "wstring", "terminated_unicode"):
-        for cls_name in ("TerminatedUnicode32DataType", "TerminatedUnicodeDataType"):
-            try:
-                mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-                cls = getattr(mod, cls_name)
-                return getattr(cls, "dataType", cls())
-            except Exception:
-                pass
-
-    # ---- simple fixed-length built-ins ----------------------------------------
-    _BUILTINS = {
-        "byte":    "ByteDataType",
-        "char":    "CharDataType",
-        "word":    "WordDataType",
-        "dword":   "DWordDataType",
-        "qword":   "QWordDataType",
-        "int":     "IntegerDataType",
-        "uint":    "UnsignedIntegerDataType",
-        "short":   "ShortDataType",
-        "ushort":  "UnsignedShortDataType",
-        "long":    "LongDataType",
-        "ulong":   "UnsignedLongDataType",
-        "float":   "FloatDataType",
-        "double":  "DoubleDataType",
-        "void":    "VoidDataType",
-        "bool":    "BooleanDataType",
-        "boolean": "BooleanDataType",
-        "pointer": "PointerDataType",
-    }
-    cls_name = _BUILTINS.get(t.lower())
-    if cls_name:
-        try:
-            mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-            cls = getattr(mod, cls_name)
-            return getattr(cls, "dataType", cls())
-        except Exception:
-            pass
-
-    # ---- program data-type manager lookup (structs, enums, typedefs, …) ------
-    dtm = program.getDataTypeManager()
-    # Exact path match first (e.g. "/MyStruct" or "/POSIX/size_t")
-    dt = dtm.getDataType(t if t.startswith("/") else f"/{t}")
-    if dt is not None:
-        return dt
-    # Substring / name search across all categories
-    from java.util import ArrayList  # type: ignore
-    hits = ArrayList()
-    dtm.findDataTypes(t, hits)
-    if hits.size() == 1:
-        return hits.get(0)
-    if hits.size() > 1:
-        paths = [str(hits.get(i).getPathName()) for i in range(hits.size())]
-        raise ValueError(
-            f"Ambiguous type '{t}'. Matches: {paths}. "
-            f"Use the full path (e.g. '/SomeDir/{t}') to disambiguate."
-        )
-
-    raise ValueError(
-        f"Unknown data type '{type_str}'. Use a built-in name (byte, char, int, string, "
-        f"char *, char[11], …) or a type defined in the program's data type manager."
-    )
+# These helpers used to live here; the import also re-exports them.
+from ghidra_rpc.server.tools._common import (
+    _comment_types,
+    _commit,
+    _find_function,
+    _maybe_swing,
+    _resolve_data_type,
+    _resolve_namespace,
+    ghidra_transaction,
+)
 
 
 def _handle_create_label(ctx, args: dict) -> dict:
@@ -362,25 +217,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
     def do_set_comment():
         from ghidra_rpc.server.context import _parse_address
 
-        # Map comment type names to Ghidra constants
-        try:
-            from ghidra.program.model.listing import CommentType
-            type_map = {
-                "plate": CommentType.PLATE,
-                "pre": CommentType.PRE,
-                "post": CommentType.POST,
-                "eol": CommentType.EOL,
-                "repeatable": CommentType.REPEATABLE,
-            }
-        except ImportError:
-            from ghidra.program.model.listing import CodeUnit
-            type_map = {
-                "plate": CodeUnit.PLATE_COMMENT,
-                "pre": CodeUnit.PRE_COMMENT,
-                "post": CodeUnit.POST_COMMENT,
-                "eol": CodeUnit.EOL_COMMENT,
-                "repeatable": CodeUnit.REPEATABLE_COMMENT,
-            }
+        type_map = _comment_types()
 
         ct = comment_type.lower()
         ghidra_ct = type_map.get(ct)
@@ -1272,33 +1109,6 @@ def _handle_set_flow_override(ctx, args: dict) -> dict:
     return _commit(ctx, pi, do_set)
 
 
-def _resolve_namespace(program, ns_path: str):
-    """Resolve a namespace by name or path. Raises ValueError if not found."""
-    st = program.getSymbolTable()
-    global_ns = program.getGlobalNamespace()
-
-    # Try the simple case: direct child of global namespace
-    ns = st.getNamespace(ns_path, global_ns)
-    if ns is not None:
-        return ns
-
-    # Try walking a path like "Outer::Inner"
-    parts = ns_path.replace("::", "/").split("/")
-    current = global_ns
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        child = st.getNamespace(part, current)
-        if child is None:
-            raise ValueError(
-                f"Namespace '{ns_path}' not found. "
-                f"Could not resolve component '{part}' under '{current.getName(True)}'."
-            )
-        current = child
-    return current
-
-
 def _handle_create_namespace(ctx, args: dict) -> dict:
     """Create or look up a namespace.
 
@@ -1611,24 +1421,7 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
     def do_batch():
         from ghidra_rpc.server.context import _parse_address
 
-        try:
-            from ghidra.program.model.listing import CommentType
-            type_map = {
-                "plate":      CommentType.PLATE,
-                "pre":        CommentType.PRE,
-                "post":       CommentType.POST,
-                "eol":        CommentType.EOL,
-                "repeatable": CommentType.REPEATABLE,
-            }
-        except ImportError:
-            from ghidra.program.model.listing import CodeUnit
-            type_map = {
-                "plate":      CodeUnit.PLATE_COMMENT,
-                "pre":        CodeUnit.PRE_COMMENT,
-                "post":       CodeUnit.POST_COMMENT,
-                "eol":        CodeUnit.EOL_COMMENT,
-                "repeatable": CodeUnit.REPEATABLE_COMMENT,
-            }
+        type_map = _comment_types()
 
         results  = [None] * len(operations)
         resolved = []

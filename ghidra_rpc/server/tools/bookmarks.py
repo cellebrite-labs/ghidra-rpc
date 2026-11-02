@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.modifications import (
+from ghidra_rpc.server.tools._common import (
     _commit,
     _maybe_swing,
     ghidra_transaction,
