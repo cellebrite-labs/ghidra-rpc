@@ -29,6 +29,7 @@ from ghidra_rpc.server.tools.version_tracking import (
     _handle_function_diff,
     _normalise_decompiled,
     _normalise_disassembly,
+    _open_vt_programs,
 )
 
 
@@ -253,6 +254,34 @@ class TestDecompileAllValidation:
         with pytest.raises(ValueError, match="binary"):
             _handle_decompile_all(ctx, {})
         ctx.get_program.assert_not_called()
+
+
+# ── version_track / match_function program swap ───────────────────────────────
+
+class TestOpenVtProgramsGuards:
+    """_open_vt_programs closes and drops the daemon's program handles, so any
+    request it can't serve must be rejected before that, or the binaries
+    vanish from the daemon until re-loaded."""
+
+    def test_gui_mode_is_rejected_before_touching_programs(self, fake_ghidra_util_task):
+        gui = MagicMock()   # GuiContext has run_on_swing
+        with pytest.raises(RuntimeError, match="headless"):
+            _open_vt_programs(gui, "a", "b", "consumer")
+        gui.get_program.assert_not_called()
+
+    def test_same_binary_twice_is_rejected_before_closing_it(self, fake_ghidra_util_task):
+        pi = MagicMock()
+        ctx = types.SimpleNamespace(
+            get_program=lambda _name: pi,
+            save_program=MagicMock(),
+            project=MagicMock(),
+            programs={"/a": pi},
+        )
+        with pytest.raises(ValueError, match="same binary"):
+            _open_vt_programs(ctx, "a", "/a", "consumer")
+        ctx.save_program.assert_not_called()
+        pi.decompiler_pool.dispose.assert_not_called()
+        assert ctx.programs == {"/a": pi}
 
 
 # ── goto (GUI-only) ───────────────────────────────────────────────────────────

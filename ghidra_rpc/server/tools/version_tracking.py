@@ -28,8 +28,20 @@ def _open_vt_programs(ctx, binary1: str, binary2: str, consumer: str):
     """
     from ghidra.util.task import TaskMonitor
 
+    # The close/reopen dance below relies on GhidraProject (headless only):
+    # GUI mode has no per-program close() and no _take_ownership().
+    if hasattr(ctx, "run_on_swing"):
+        raise RuntimeError(
+            "Version tracking is only supported in headless mode."
+        )
+
     pi_src = ctx.get_program(binary1)
     pi_dst = ctx.get_program(binary2)
+    if pi_src is pi_dst:
+        raise ValueError(
+            f"'{binary1}' and '{binary2}' resolve to the same binary; "
+            "version tracking needs two different loaded binaries."
+        )
 
     # Save before closing
     ctx.save_program(pi_src)
@@ -68,10 +80,33 @@ def _open_vt_programs(ctx, binary1: str, binary2: str, consumer: str):
         _restore_daemon_programs(ctx, src_name, dst_name, src_key, dst_key)
         raise RuntimeError("Could not find program DomainFiles in project")
 
-    src_prog = src_df.getDomainObject(consumer, False, False, TaskMonitor.DUMMY)
-    dst_prog = dst_df.getDomainObject(consumer, False, False, TaskMonitor.DUMMY)
+    src_prog = dst_prog = None
+    try:
+        src_prog = src_df.getDomainObject(consumer, False, False, TaskMonitor.DUMMY)
+        dst_prog = dst_df.getDomainObject(consumer, False, False, TaskMonitor.DUMMY)
+    except Exception:
+        if src_prog is not None:
+            src_prog.release(consumer)
+        _restore_daemon_programs(ctx, src_name, dst_name, src_key, dst_key)
+        raise
 
     return src_prog, dst_prog, src_name, dst_name, src_key, dst_key
+
+
+def _create_vt_session(ctx, session_name, src_prog, dst_prog, consumer,
+                       src_name, dst_name, src_key, dst_key):
+    """Create a VTSessionDB, restoring the daemon's programs if that fails."""
+    from ghidra.feature.vt.api.db import VTSessionDB
+
+    try:
+        return VTSessionDB.createVTSession(
+            session_name, src_prog, dst_prog, consumer
+        )
+    except Exception:
+        src_prog.release(consumer)
+        dst_prog.release(consumer)
+        _restore_daemon_programs(ctx, src_name, dst_name, src_key, dst_key)
+        raise
 
 
 def _restore_daemon_programs(ctx, src_name, dst_name, src_key, dst_key):
@@ -139,7 +174,6 @@ def _handle_version_track(ctx, args: dict) -> dict:
     Returns matched pairs with similarity scores and lists of unmatched
     functions in each binary.
     """
-    from ghidra.feature.vt.api.db import VTSessionDB
     from ghidra.feature.vt.api.main import VTAssociationType
 
     binary1 = args.get("source", args.get("binary1", ""))
@@ -159,8 +193,9 @@ def _handle_version_track(ctx, args: dict) -> dict:
         _open_vt_programs(ctx, binary1, binary2, consumer)
 
     session_name = f"ghidra-rpc-vt-{src_name}-vs-{dst_name}"
-    vt_session = VTSessionDB.createVTSession(
-        session_name, src_prog, dst_prog, consumer
+    vt_session = _create_vt_session(
+        ctx, session_name, src_prog, dst_prog, consumer,
+        src_name, dst_name, src_key, dst_key,
     )
 
     try:
@@ -391,7 +426,6 @@ def _handle_match_function(ctx, args: dict) -> dict:
     find candidate matches for a single function from source_binary in
     target_binary.
     """
-    from ghidra.feature.vt.api.db import VTSessionDB
     from ghidra.util.task import TaskMonitor
 
     source_binary = args.get("source_binary", "")
@@ -417,8 +451,9 @@ def _handle_match_function(ctx, args: dict) -> dict:
         _open_vt_programs(ctx, source_binary, target_binary, consumer)
 
     session_name = f"ghidra-rpc-match-{func_name}"
-    vt_session = VTSessionDB.createVTSession(
-        session_name, src_prog, dst_prog, consumer
+    vt_session = _create_vt_session(
+        ctx, session_name, src_prog, dst_prog, consumer,
+        src_name, dst_name, src_key, dst_key,
     )
 
     try:

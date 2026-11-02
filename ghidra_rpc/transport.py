@@ -89,7 +89,7 @@ def listen(endpoint_path: Path, backlog: int = 5) -> tuple[socket.socket, str | 
         raise
 
 
-def connect(endpoint_path: Path, timeout: float) -> tuple[socket.socket, str | None]:
+def connect(endpoint_path: Path, timeout: float | None) -> tuple[socket.socket, str | None]:
     """Connect to a published endpoint and return its authentication token."""
     if not _IS_WINDOWS:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

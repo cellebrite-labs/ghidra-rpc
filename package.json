@@ -1,7 +1,7 @@
 {
   "name": "ghidra-rpc",
   "version": "0.2.0",
-  "description": "Reverse engineering assistant powered by Ghidra — CLI daemon exposing decompilation, cross-references, and binary analysis over a Unix domain socket",
+  "description": "Reverse engineering assistant powered by Ghidra — CLI daemon exposing decompilation, cross-references, and binary analysis over a local socket",
   "keywords": ["pi-package"],
   "pi": {
     "skills": ["./SKILL.md"]

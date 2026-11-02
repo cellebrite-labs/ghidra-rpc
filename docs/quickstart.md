@@ -35,10 +35,11 @@ ghidra-rpc load /usr/bin/ls
 
 Output:
 ```json
-{"id": "...", "ok": true, "result": {"binary": "/ls-a1b2c3"}}
+{"id": "...", "ok": true, "result": {"binary": "/ls-a1b2c3", "short_name": "ls", "analysis_complete": true}}
 ```
 
-The binary key (e.g., `/ls-a1b2c3`) is what you'll use in subsequent commands.
+Use `short_name` (e.g., `ls`) in subsequent commands — binaries are matched by substring.
+Fall back to the full key (`/ls-a1b2c3`) only if two loaded binaries share a name.
 
 ## 3. Explore
 

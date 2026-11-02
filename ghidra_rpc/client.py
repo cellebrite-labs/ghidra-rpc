@@ -36,21 +36,46 @@ _DEFAULT_SOCKET_TIMEOUT: float = 120.0
 # to serialise and send its response after the operation itself completes.
 _SOCKET_TIMEOUT_BUFFER: float = 30.0
 
+# Server-side default for the per-decompile ``timeout`` arg when it is absent.
+_SERVER_DECOMPILE_TIMEOUT: float = 60.0
 
-def _derive_socket_timeout(args: dict | None) -> float:
+# Fixed timeout of the read-back decompile retype/rename_variable run to verify.
+_VERIFY_DECOMPILE_TIMEOUT: float = 30.0
+
+# Commands that run two full decompiles, each with the ``timeout`` arg.
+_DOUBLE_DECOMPILE_CMDS = ("function_diff", "batch_edit_variables")
+
+# Commands that run one decompile with ``timeout`` plus a fixed verify pass.
+_DECOMPILE_AND_VERIFY_CMDS = ("retype_variable", "rename_variable")
+
+
+def _derive_socket_timeout(cmd: str, args: dict | None) -> float | None:
     """Return the appropriate socket timeout for a request.
 
-    If ``args`` contains any of the recognised timeout keys, the socket
-    timeout is set to ``max(those values) + _SOCKET_TIMEOUT_BUFFER``.
-    This ensures that a ``decompile --timeout 180`` or
-    ``load --analysis-timeout 300`` request always gets a socket timeout that
-    exceeds the operation's own budget.
+    The result always exceeds the server's own budget for ``cmd``, so the
+    client never gives up while the daemon is still working (and holding the
+    handler lock):
 
-    Falls back to ``_DEFAULT_SOCKET_TIMEOUT`` (120 s) when no timeout arg is
-    present.
+    * ``load`` with analysis and no ``analysis_timeout`` -> ``None`` (no
+      limit), since the server runs analysis to completion.
+    * Commands that decompile twice (``function_diff``,
+      ``batch_edit_variables``) -> ``2 * timeout + buffer``.
+    * ``retype_variable`` / ``rename_variable`` -> ``timeout`` plus their
+      fixed verify decompile plus the buffer.
+    * Otherwise, if ``args`` has ``timeout``/``analysis_timeout``,
+      ``max(those values) + _SOCKET_TIMEOUT_BUFFER``; else
+      ``_DEFAULT_SOCKET_TIMEOUT`` (120 s).
     """
-    if not args:
-        return _DEFAULT_SOCKET_TIMEOUT
+    args = args or {}
+    if (cmd == "load" and args.get("analyze", True)
+            and args.get("analysis_timeout") is None):
+        return None
+    if cmd in _DOUBLE_DECOMPILE_CMDS:
+        timeout = float(args.get("timeout", _SERVER_DECOMPILE_TIMEOUT))
+        return 2 * timeout + _SOCKET_TIMEOUT_BUFFER
+    if cmd in _DECOMPILE_AND_VERIFY_CMDS:
+        timeout = float(args.get("timeout", _SERVER_DECOMPILE_TIMEOUT))
+        return timeout + _VERIFY_DECOMPILE_TIMEOUT + _SOCKET_TIMEOUT_BUFFER
     timeouts = [
         float(args[k])
         for k in _TIMEOUT_ARG_KEYS
@@ -74,12 +99,9 @@ def send_request(
     reads the response, and returns the parsed dict.
 
     ``socket_timeout`` controls how long the client waits for the server to
-    respond.  If not given it is derived automatically:
-
-    * If ``args`` contains a ``"timeout"`` or ``"analysis_timeout"`` key the
-      socket timeout is ``max(those values) + 30 s`` so the network layer
-      never fires before the server operation has had its full allotment.
-    * Otherwise the default is 120 s.
+    respond.  If not given it is derived from ``cmd`` and ``args`` so the
+    network layer never fires before the server operation has had its full
+    allotment (see ``_derive_socket_timeout``).
 
     Raises ``DaemonNotRunning`` if the socket is missing or the connection is
     refused, and ``DaemonError`` if the daemon returns ``ok: false``.
@@ -89,7 +111,7 @@ def send_request(
 
     effective_timeout = (
         socket_timeout if socket_timeout is not None
-        else _derive_socket_timeout(args)
+        else _derive_socket_timeout(cmd, args)
     )
 
     try:
@@ -148,7 +170,7 @@ def send_request_with_auto_restart(
     session file exists, raises DaemonNotRunning with a helpful message.
 
     ``socket_timeout`` is forwarded to ``send_request``; when not given it is
-    derived automatically from ``args`` (see ``send_request``).
+    derived automatically from ``cmd`` and ``args`` (see ``send_request``).
     """
     from ghidra_rpc import daemon as daemon_mod
 

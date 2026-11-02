@@ -447,6 +447,20 @@ class HeadlessContext:
         self.project.close()
 
 
+# Consumer GuiContext.refresh_programs opens project files with (a plain
+# string is a valid Java Object via JPype).
+_GUI_CONSUMER = "ghidra-rpc"
+
+
+def _release_quietly(program) -> None:
+    """Release GuiContext's consumer on *program*, ignoring a closed object."""
+    try:
+        if not program.isClosed():
+            program.release(_GUI_CONSUMER)
+    except Exception:
+        logger.warning("Could not release %s", program, exc_info=True)
+
+
 class GuiContext:
     """Context for GUI mode Ghidra operation.
 
@@ -461,6 +475,9 @@ class GuiContext:
         self.launcher = launcher
         self.programs: dict[str, ProgramInfo] = {}
         self._programs_lock = threading.RLock()
+        # Programs refresh_programs opened itself (no tool had them open), each
+        # holding exactly one _GUI_CONSUMER until released by refresh or close.
+        self._own_programs: dict[str, Any] = {}
 
         # Wait for GUI to be ready
         self.project = self._wait_for_project(session, timeout=240.0)
@@ -581,6 +598,10 @@ class GuiContext:
         1. Programs currently open in a running tool (e.g. CodeBrowser).
         2. Programs stored in the project folder but not yet open in any tool
            — opened directly via the domain-file API so no GUI tool is required.
+
+        A cached entry is replaced when the program object behind its key
+        changes (e.g. a CodeBrowser closed its copy, so Source 2 now supplies
+        a fresh one); otherwise the daemon would keep serving a closed program.
         """
         from ghidra.app.services import ProgramManager
         from ghidra.framework.main import AppInfo
@@ -591,6 +612,7 @@ class GuiContext:
         project = AppInfo.getActiveProject() or self.project
 
         active: dict[str, Any] = {}
+        opened: dict[str, Any] = {}   # newly opened by Source 2 this call
 
         # --- Source 1: programs open in running tools ---
         try:
@@ -615,19 +637,25 @@ class GuiContext:
                 key = str(df.getPathname())
                 if key in active:
                     continue
+                held = self._own_programs.get(key)
+                if held is not None and not held.isClosed():
+                    # Already holding a consumer: getDomainObject would add
+                    # another (Ghidra doesn't de-duplicate consumers).
+                    active[key] = held
+                    continue
                 logger.debug("Source2: trying to open %s", key)
                 try:
-                    # Use a plain string as the consumer (valid Java Object via JPype)
                     domain_obj = df.getDomainObject(
-                        "ghidra-rpc", False, False, TaskMonitor.DUMMY
+                        _GUI_CONSUMER, False, False, TaskMonitor.DUMMY
                     )
                     # Check it's a Program by duck-typing (isinstance is unreliable
                     # across the Java/Python boundary with JPype)
                     if hasattr(domain_obj, "getFunctionManager"):
                         active[key] = domain_obj
+                        opened[key] = domain_obj
                         logger.debug("Source2: opened %s", key)
                     else:
-                        domain_obj.release("ghidra-rpc")
+                        domain_obj.release(_GUI_CONSUMER)
                 except Exception:
                     logger.warning("Could not open project file %s", key, exc_info=True)
         except Exception:
@@ -642,10 +670,21 @@ class GuiContext:
                 self.programs[key].decompiler_pool.dispose()
                 del self.programs[key]
 
-            # Add/update entries
+            # Add new entries; replace ones whose program object changed
             for key, program in active.items():
-                if key not in self.programs:
-                    self.programs[key] = self._init_program_info(program)
+                pi = self.programs.get(key)
+                if pi is not None and pi.program == program:
+                    continue
+                if pi is not None:
+                    pi.decompiler_pool.dispose()
+                self.programs[key] = self._init_program_info(program)
+
+            # Release consumers on programs we opened but no longer serve.
+            for key, program in list(self._own_programs.items()):
+                if key not in active or active[key] != program:
+                    _release_quietly(program)
+                    del self._own_programs[key]
+            self._own_programs.update(opened)
 
     def _init_program_info(self, program) -> ProgramInfo:
         from ghidra.program.flatapi import FlatProgramAPI
@@ -856,6 +895,9 @@ class GuiContext:
                     )
                 pi.decompiler_pool.dispose()
             self.programs.clear()
+            for program in self._own_programs.values():
+                _release_quietly(program)
+            self._own_programs.clear()
         # Request GUI shutdown
         if hasattr(self.launcher, 'request_shutdown'):
             self._clear_tool_prompts()

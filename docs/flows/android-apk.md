@@ -155,7 +155,7 @@ ghidra-rpc search-decompiled app.apk "targetF1" --class com::example::Foo
 
 ## Notes & limitations
 
-- DEX/APK analysis is fast (seconds), so the default analysis timeout is plenty.
+- DEX/APK analysis is fast (seconds); `--analysis-timeout` is rarely needed.
 - `imports`/`exports` are less meaningful than on native code — Dalvik resolves
   everything against the class pool; prefer `symbols` and `strings`.
 - To read `AndroidManifest.xml`, resource files, or native `.so` libraries

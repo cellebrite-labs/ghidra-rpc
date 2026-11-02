@@ -45,6 +45,9 @@ Options:
 - `--min-similarity 0.5` — filter out low-confidence matches.
 - `--include-data` — include data matches (not just functions).
 - `--limit 1000` — increase the match result limit (default 500).
+- `--socket-timeout 3600` — wait longer for very large binaries (default 1800 s).
+
+`version-track` and `match-function` run in headless mode only.
 
 > **Note on deduplication**: `version-track` automatically deduplicates by source
 > function — for each source function only the single best-scoring destination match
@@ -63,7 +66,7 @@ ghidra-rpc function-diff binary_v1 <func_name> binary_v2 <func_name>
 
 This decompiles both functions, normalises auto-generated variable names to
 suppress noise, and returns a unified diff.  The output includes:
-- `is_identical` — whether the functions are semantically equivalent.
+- `is_identical` — whether the two listings are identical after normalisation.
 - `diff` — a unified diff with noise removed.
 - `raw_code1` / `raw_code2` — the original decompiled code for both sides.
 

@@ -3,7 +3,8 @@
 ## What This Is
 
 `ghidra-rpc` is a skill that wraps Ghidra's reverse engineering capabilities in a
-CLI daemon communicating over Unix domain sockets. It lets an AI assistant analyze
+CLI daemon communicating over a local socket (Unix domain socket; loopback TCP on
+Windows). It lets an AI assistant analyze
 binaries, decompile functions, trace cross-references, rename symbols, and annotate
 findings — all by running `ghidra-rpc` commands from the shell.
 
@@ -33,7 +34,8 @@ ghidra-rpc/
 │   ├── __init__.py       — Version
 │   ├── cli.py            — Click CLI (ghidra-rpc entry point, all user commands)
 │   ├── client.py         — Local transport client (send_request, auto-restart logic)
-│   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background, stop)
+│   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background,
+│   │                       stop_daemon, is_running)
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
 │   │                       from session or current env to the child process.
 │   ├── session.py        — Session persistence
@@ -125,20 +127,29 @@ ghidra-rpc/
 │                                  _sanitize_signature() — strips trailing `;` and
 │                                    extracts inline calling conventions (__thiscall, etc.)
 │
+├── .github/workflows/    — tests.yml (offline suite on Ubuntu/macOS/Windows),
+│                           integration.yml (Ghidra integration suite)
+│
 └── tests/
+    ├── conftest.py              — `short_tmp_path` fixture (short /tmp-rooted dir for
+    │                              AF_UNIX sockets; see gotcha 9)
     ├── test_protocol.py         — Wire protocol tests (no Ghidra needed)
     ├── test_client.py           — Client + session tests (no Ghidra needed)
     ├── test_session_registry.py — Registry, discover-instances, list-instances CLI
     ├── test_cli.py              — General CLI-parsing tests (no Ghidra needed): the
     │                              JSON-usage-error contract in main(), set-comment's
-    │                              --comment option, list-bookmarks --category
+    │                              --comment option, list-bookmarks --category,
+    │                              search-decompiled --address-min/max forwarding,
+    │                              disassemble --with-instructions
     ├── test_search_decompiled.py — search_decompiled handler logic (regex matching,
     │                              class_filter, limit/max_functions truncation,
     │                              scanned_range/next_unscanned_address, address
     │                              range) against a fully mocked program; no Ghidra needed
     ├── test_gui_context.py      — GuiContext._project_matches / _normalize_project_location
     │                              against a fake ProjectLocator (no Ghidra needed); regression
-    │                              coverage for the Windows drive-letter path bug (gotcha 12)
+    │                              coverage for the Windows drive-letter path bug (gotcha 12);
+    │                              refresh_programs replacing closed program handles and not
+    │                              stacking consumers (gotcha 15), against fake tools/files
     ├── test_address_format.py   — _fmt_address / _looks_like_address and _find_function's
     │                              address vs. bare-hex handling, with fakes (no Ghidra needed)
     ├── test_gui_modal_dialogs.py — GUI mode never blocks on a Ghidra modal: load_binary flags
@@ -177,7 +188,8 @@ User Terminal                      Background Process (same machine)
                                   └─────────────────────────────────────┘
 ```
 
-- **Wire protocol**: newline-delimited JSON over Unix domain socket
+- **Wire protocol**: newline-delimited JSON over a Unix domain socket (token-authenticated
+  loopback TCP on Windows; see `transport.py`)
 - **Request**: `{"id": "uuid", "cmd": "decompile", "args": {"binary": "...", "func": "..."}}`
 - **Response**: `{"id": "uuid", "ok": true, "result": {...}}` or `{"id": "uuid", "ok": false, "error": "...", "message": "..."}`
 - **Threading**: each client connection runs in its own thread; a global `_HANDLER_LOCK` in `main.py` serialises all command handler invocations to prevent Ghidra transaction conflicts
@@ -304,7 +316,8 @@ uv run ghidra-rpc decompile ls main
    other commands until the current one completes.
 
 7. **`list-instances`/`stop --all` glob real `/tmp`, not just the registry**: sockets
-   always live in `/tmp` (not covered by `GHIDRA_RPC_STATE_DIR`), so any test touching
+   always live in `/tmp` (`%LOCALAPPDATA%\ghidra-rpc` on Windows; not covered by
+   `GHIDRA_RPC_STATE_DIR`), so any test touching
    `_discover_instances()` must also monkeypatch `cli._SOCKET_SCAN_DIR` to a `tmp_path` —
    otherwise it can see, and `stop --all` can actually kill, real daemons on the host.
 
@@ -399,6 +412,12 @@ uv run ghidra-rpc decompile ls main
 
     To diagnose a hung GUI daemon, `jcmd <pid> Thread.print` and look at
     `AWT-EventQueue-0`.
+
+15. **`getDomainObject(consumer, ...)` stacks a consumer on every call** —
+    `DomainObjectAdapter.addConsumer` doesn't de-duplicate (Ghidra 12.1 source),
+    so calling it again with the same consumer leaks one that must be
+    `release()`d separately. Open once and cache; see
+    `GuiContext.refresh_programs` / `_own_programs`.
 
 > For more detail on all gotchas plus the Ghidra API reference and session/daemon
 > internals, read **`docs/internals.md`**.

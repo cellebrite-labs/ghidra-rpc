@@ -23,29 +23,17 @@ For very large binaries (>100MB), 8GB or more may be needed.
 
 ## Stale Socket File
 
-**Symptom**: "Address already in use" or daemon won't start, but `status` shows not running.
-
-**Fix**: Remove the stale socket file:
-```bash
-# Find the socket path
-ghidra-rpc status --project /path/to/project.gpr
-# Remove it
-rm /tmp/ghidra-rpc-XXXXXXXX.sock
-# Start again
-ghidra-rpc start --project /path/to/project.gpr --headless
-```
-
-The daemon normally cleans up its socket on shutdown, but if it's killed (SIGKILL, power
-loss), the socket file may remain.
+The daemon normally removes its socket on shutdown; if it's killed (SIGKILL, power loss)
+the socket file `/tmp/ghidra-rpc-XXXXXXXX.sock` may remain. No manual cleanup is needed:
+`status` reports it as not running, and the next `start` replaces the leftover file before
+binding.
 
 On Windows the equivalent file is the endpoint descriptor recording the daemon's
 loopback port and auth token, at
-`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-XXXXXXXX.sock`. `status` prints its path the
-same way; delete it with `del` instead of `rm`. Unlike `/tmp`, that directory is not
-cleared on reboot, so a descriptor left behind by a killed daemon persists — but you
-normally do not need to remove it by hand: the next command finds the recorded port
-dead and restarts the daemon, which rewrites the descriptor with a fresh port and
-token.
+`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-XXXXXXXX.sock`. Unlike `/tmp`, that directory is
+not cleared on reboot, so a descriptor left behind by a killed daemon persists — but it is
+handled the same way: the next command finds the recorded port dead and restarts the
+daemon, which rewrites the descriptor with a fresh port and token.
 
 ## macOS Framework Python Issue
 
@@ -69,14 +57,14 @@ ghidra-rpc start --project /tmp/project.gpr --headless
 ## GUI Restart Reports Timeout (or `ok: true` With Warning)
 
 **Symptom**: `ghidra-rpc restart` in GUI mode returns a response with a `warning` field
-instead of a clean `{"status": "restarted"}`, or (with an older version) exits with
-`RestartTimeout`.
+instead of a clean `{"status": "restarted"}`.
 
 **Cause**: GUI startup (JVM boot → Ghidra window → project open) routinely takes 60–120 s
-or more on a cold machine. The default poll timeout for headless mode (60 s) was too short.
+or more on a cold machine.
 
-**Behaviour since fix**: `restart` now defaults to **180 s** in GUI mode. If the socket
-becomes responsive within that window you get `{"ok": true, "status": "restarted"}`. If
+**Behaviour**: `restart` waits up to **180 s** in GUI mode (60 s headless). If the socket
+becomes responsive within that window you get
+`{"ok": true, "result": {"status": "restarted", "socket": ...}}`. If
 the daemon starts listening but has not yet responded to a ping within 180 s, you get:
 ```json
 {"ok": true, "result": {"status": "started", "warning": "Daemon started but did not become fully responsive within 180 s …"}}
@@ -119,10 +107,10 @@ can take several minutes. You can check the daemon's stderr log for progress.
 
 **Symptom**: Commands that worked before fail with "Binary not found" after daemon restart.
 
-**Cause**: In headless mode, binaries are re-imported into a new Ghidra project on restart.
-The binary keys may differ.
+**Cause**: A restarted daemon reopens the project but starts with no programs loaded.
 
-**Fix**: Re-load the binary with `ghidra-rpc load <path>`. Use `ghidra-rpc list-binaries`
+**Fix**: Re-load the binary with `ghidra-rpc load <path>` — this reopens the saved,
+already-analyzed copy from the project rather than re-importing it. Use `ghidra-rpc list-binaries`
 to see what's currently loaded, or `ghidra-rpc list-project-programs` to see what's
 stored in the project.
 
@@ -135,14 +123,13 @@ prototype that ends with a semicolon.
 resolved. If you hit this on an older version, remove the trailing `;` from the
 signature string.
 
-## `list-binaries` Is Empty in GUI Mode
+## `list-binaries` Is Missing a Program in GUI Mode
 
-**Symptom**: `list-binaries` returns `{"binaries": []}` even though you imported a
-binary.
+**Symptom**: `list-binaries` doesn't show a program you know is in the project.
 
 **Cause**: In GUI mode, `list-binaries` shows programs open in a running Ghidra tool
-(e.g. CodeBrowser). A program stored in the project but not opened in CodeBrowser
-won't appear.
+(e.g. CodeBrowser) plus programs in the project's root folder (where `load` puts them).
+A program in a project subfolder that isn't open in any tool won't appear.
 
 **Fix**: Use `ghidra-rpc list-project-programs` to see everything in the project repo.
 Then open the program in CodeBrowser (double-click in Ghidra's Project window).

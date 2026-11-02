@@ -339,6 +339,20 @@ def _handle_rename_symbol(ctx, args: dict) -> dict:
     return result
 
 
+def _resolve_comment_address(pi, target: str):
+    """Resolve a set-comment target: a 0x address as-is, else a function name.
+
+    Follows _find_function's rule that only 0x-prefixed input is an address,
+    so a function named e.g. ``add`` or ``cafe`` is not taken for 0xadd.
+    An address is used exactly (not snapped to its containing function).
+    """
+    from ghidra_rpc.server.context import _looks_like_address, _parse_address
+
+    if _looks_like_address(target):
+        return _parse_address(pi.program, target)
+    return _find_function(pi, target).getEntryPoint()
+
+
 def _handle_set_comment(ctx, args: dict) -> dict:
     """Set a comment at an address or function."""
     binary = args.get("binary", "")
@@ -352,8 +366,6 @@ def _handle_set_comment(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
 
     def do_set_comment():
-        from ghidra_rpc.server.context import _parse_address
-
         # Map comment type names to Ghidra constants
         try:
             from ghidra.program.model.listing import CommentType
@@ -382,12 +394,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
                 f"Use one of: {list(type_map.keys())}"
             )
 
-        # Resolve address — try hex first, then function name
-        try:
-            addr = _parse_address(pi.program, address)
-        except ValueError:
-            func = _find_function(pi, address)
-            addr = func.getEntryPoint()
+        addr = _resolve_comment_address(pi, address)
 
         with ghidra_transaction(pi.program, f"ghidra-rpc: set {ct} comment @ {addr}"):
             pi.program.getListing().setComment(addr, ghidra_ct, comment)
@@ -1636,8 +1643,6 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
 
     def do_batch():
-        from ghidra_rpc.server.context import _parse_address
-
         try:
             from ghidra.program.model.listing import CommentType
             type_map = {
@@ -1685,11 +1690,7 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
                 continue
 
             try:
-                try:
-                    addr = _parse_address(pi.program, address)
-                except ValueError:
-                    func = _find_function(pi, address)
-                    addr = func.getEntryPoint()
+                addr = _resolve_comment_address(pi, address)
                 resolved.append((idx, addr, comment, ghidra_ct, ct_name))
             except Exception as e:
                 results[idx] = {

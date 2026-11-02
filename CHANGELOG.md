@@ -25,11 +25,15 @@
     (`/C:/test/`), which `pathlib` misparsed as a relative path, making the
     daemon's project-open check always fail.
   - **CI**: `tests.yml` (unit suite, Ubuntu/macOS/Windows) and
-    `integration.yml` (112-test Ghidra suite) cover headless Windows. GUI
+    `integration.yml` (Ghidra integration suite) cover headless Windows. GUI
     mode has no CI coverage (no display in the runner).
 
 ### Changed
 
+- `version-track` and `match-function` take `--socket-timeout` (default
+  1800 s) like the other bulk commands, instead of the 120 s client default.
+- Removed `version-track --ref-min-score`/`--ref-min-conf`; they were never
+  passed to the correlators.
 - **Breaking:** every address in command output is now `0x`-prefixed
   (`0x00101139`; space-qualified as `EXTERNAL:0x00000001` /
   `ov1::0x00001000`; stack offsets unchanged as `Stack[-0x10]`), so output
@@ -55,6 +59,23 @@
 
 ### Fixed
 
+- The CLI no longer gives up on long-running commands while the daemon is
+  still working: `load` without `--analysis-timeout` waits for analysis to
+  finish (was 120 s); `function-diff` and `batch-edit-variable` wait for both
+  of their decompiles; `retype-variable`/`rename-variable` include their
+  verify decompile.
+- `version-track` and `match-function` reject the same binary as both source
+  and destination, and are rejected in GUI mode, instead of dropping the
+  binary from the daemon until it is re-`load`ed. A failure while opening the
+  programs or creating the VT session no longer drops them either.
+- GUI mode: closing the CodeBrowser that had a program open no longer
+  leaves the daemon serving the closed program (`ClosedException: File is
+  closed`) until restart; it switches to the project-folder copy. Programs
+  opened from the project folder are no longer re-opened on every command,
+  which stacked an unreleased Ghidra consumer each time.
+- `set-comment`/`batch-set-comment` follow the 0x-prefix rule: a function
+  named like hex (`add`, `cafe`) is resolved by name, not taken as address
+  `0xadd`. Bare hex is now a name query, as in every other command.
 - `write-bytes` docs (`SKILL.md`, `--help`, handler docstring) said a patch
   only leaves the listing stale and suggested `disassemble` to refresh it.
   Writing over a disassembled instruction is rejected, and `disassemble` only

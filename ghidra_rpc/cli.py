@@ -695,7 +695,7 @@ def rename_symbol(binary: str, address: str, new_name: str, create: bool,
 @click.option("--type", "comment_type", type=click.Choice(["plate", "pre", "post", "eol", "repeatable"]), default="eol")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
 def set_comment(binary: str, address: str, comment: str, comment_type: str, project: str | None):
-    """Set a comment at an address."""
+    """Set a comment at an address (0x-prefixed) or a function's entry (by name)."""
     _rpc_command(_resolve_project(project), "set_comment", {
         "binary": binary, "address": address, "comment": comment, "comment_type": comment_type,
     })
@@ -1787,15 +1787,13 @@ def list_namespaces(binary: str, limit: int, project: str | None):
               help="Minimum similarity score (0.0-1.0) to include in results.")
 @click.option("--changed-only", "changed_only", is_flag=True, default=False,
               help="Only return matched pairs where similarity < 1.0 (i.e. functions that changed).")
-@click.option("--ref-min-score", "ref_min_score", type=float, default=0.95,
-              help="Min score for reference correlators (default 0.95).")
-@click.option("--ref-min-conf", "ref_min_conf", type=float, default=10.0,
-              help="Min confidence for reference correlators (default 10.0).")
+@click.option("--socket-timeout", type=float, default=1800.0, show_default=True,
+              help="Max seconds to wait for the correlators to finish. Raise "
+                   "this for very large binaries.")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
 def version_track(source: str, destination: str, limit: int, include_data: bool,
                   min_similarity: float, changed_only: bool,
-                  ref_min_score: float, ref_min_conf: float,
-                  project: str | None):
+                  socket_timeout: float, project: str | None):
     """Run Auto Version Tracking between two loaded binaries.
 
     Uses Ghidra's Version Tracking framework with multiple correlators
@@ -1812,8 +1810,7 @@ def version_track(source: str, destination: str, limit: int, include_data: bool,
         "source": source, "destination": destination,
         "limit": limit, "include_data": include_data,
         "min_similarity": min_similarity, "changed_only": changed_only,
-        "ref_min_score": ref_min_score, "ref_min_conf": ref_min_conf,
-    })
+    }, socket_timeout=socket_timeout)
 
 
 @cli.command(name="match-function")
@@ -1822,9 +1819,12 @@ def version_track(source: str, destination: str, limit: int, include_data: bool,
 @click.argument("target_binary")
 @click.option("--threshold", "-t", type=float, default=0.0,
               help="Minimum similarity score (0.0-1.0) for candidates.")
+@click.option("--socket-timeout", type=float, default=1800.0, show_default=True,
+              help="Max seconds to wait for the correlators to finish. Raise "
+                   "this for very large binaries.")
 @click.option("--project", "-p", type=str, help="Path to .gpr project file")
 def match_function(source_binary: str, func: str, target_binary: str,
-                   threshold: float, project: str | None):
+                   threshold: float, socket_timeout: float, project: str | None):
     """Find matching function(s) in another binary.
 
     Given a function in SOURCE_BINARY, finds the most likely corresponding
@@ -1837,7 +1837,7 @@ def match_function(source_binary: str, func: str, target_binary: str,
     _rpc_command(_resolve_project(project), "match_function", {
         "source_binary": source_binary, "func": func,
         "target_binary": target_binary, "threshold": threshold,
-    })
+    }, socket_timeout=socket_timeout)
 
 
 @cli.command(name="decompile-all")
@@ -2151,9 +2151,9 @@ def _rpc_command(gpr: Path, cmd: str, args: dict, socket_timeout: float | None =
 
     ``socket_timeout``, when given, overrides the client's automatic
     per-command timeout derivation (see ``client._derive_socket_timeout``).
-    Needed for bulk sweep commands (e.g. decompile-all, search-decompiled)
-    where the wall-clock cost scales with the number of functions in the
-    binary, not with the per-function ``timeout`` argument alone.
+    Needed for bulk commands (decompile-all, search-decompiled,
+    version-track, match-function) whose wall-clock cost scales with the
+    size of the binary, not with any per-function ``timeout`` argument.
     """
     from ghidra_rpc.client import send_request_with_auto_restart
 

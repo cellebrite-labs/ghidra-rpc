@@ -79,7 +79,8 @@ ghidra-rpc --version
 ## What Gets Installed
 
 - `ghidra-rpc` — the CLI you'll use for all commands
-- `ghidra-rpcd` — the background daemon entry point (used internally by `ghidra-rpc restart`)
+- `ghidra-rpcd` — standalone daemon entry point (`ghidra_rpc.daemon:main`); `start --detach`,
+  `restart` and auto-restart run the same module via `python -m ghidra_rpc.daemon`
 
 Both are Python entry points managed by uv. No global packages are modified.
 

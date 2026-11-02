@@ -116,6 +116,7 @@ disappeared (e.g. after a crash).
 - [Binary Audit](docs/flows/binary-audit.md)
 - [Vulnerability Research](docs/flows/vulnerability-research.md)
 - [Patch Analysis](docs/flows/patch-analysis.md)
+- [Android APK / DEX](docs/flows/android-apk.md)
 
 ## License
 

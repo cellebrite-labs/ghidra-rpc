@@ -186,6 +186,7 @@ class TestCloseClearsToolPrompts:
 
         ctx = GuiContext.__new__(GuiContext)
         ctx.programs = {}
+        ctx._own_programs = {}
         ctx._programs_lock = threading.RLock()
         ctx.project = project
         ctx.run_on_swing = lambda fn: fn()
@@ -205,6 +206,7 @@ class TestCloseClearsToolPrompts:
         )
         ctx = GuiContext.__new__(GuiContext)
         ctx.programs = {}
+        ctx._own_programs = {}
         ctx._programs_lock = threading.RLock()
         ctx.project = None
         ctx.run_on_swing = lambda fn: fn()  # AppInfo has no getActiveProject -> raises

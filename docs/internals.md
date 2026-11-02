@@ -11,7 +11,6 @@ recreate the daemon without the user having to pass `--mode` / `--headless` agai
 **File location** (resolution order):
 1. `$GHIDRA_RPC_STATE_DIR/<hash>.json` — if the env var is set
 2. `<gpr-parent>/.ghidra-rpc-<hash>.json` — alongside the project file (default)
-3. Backward compat: `~/.local/share/ghidra-rpc/<hash>.json` — checked by `load()` only
 
 **Fields stored**: `mode`, `project_gpr`, `socket_path`, `ghidra_install_dir`
 (`ghidra_install_dir` is `null` when not explicitly provided).
@@ -87,7 +86,7 @@ locator stands in for the real `ProjectLocator`).
 
 Linux and macOS use the original Unix domain socket transport. Windows Python
 builds do not consistently provide `AF_UNIX`, so Windows uses a TCP listener bound
-only to `127.0.0.1`. Its temporary endpoint file contains the chosen port and a
+only to `127.0.0.1`. Its endpoint file (under `%LOCALAPPDATA%\ghidra-rpc`) contains the chosen port and a
 random authentication token; every client request must present that token. The
 wire format remains newline-delimited JSON on every platform.
 
@@ -165,9 +164,18 @@ Takes a `HighSymbol` (not `HighVariable`). Obtain it from
 ### 7. GUI program discovery
 `GuiContext.refresh_programs` uses two sources:
 1. Programs open in running tools (via `ProgramManager` service).
-2. Project-folder files (via `getDomainObject`).
-Source 2 is a fallback; opening a program in CodeBrowser first (source 1) is the most
-reliable path. Document this clearly to users.
+2. Files in the project's root folder (via `getDomainObject`), so a program `load`ed
+   earlier stays usable when no tool has it open. Subfolders are not scanned.
+Verified live (Ghidra 12.1): a fresh GUI daemon lists and decompiles a root-folder
+program that no CodeBrowser has open.
+
+A cached entry is replaced whenever the program object behind its key changes — when a
+CodeBrowser closes its copy, Source 2 supplies a fresh one, and keeping the old entry
+meant `ClosedException: File is closed` until restart. Source 2 opens each file once
+(tracked in `GuiContext._own_programs`) and releases that consumer when the file
+leaves the list or on `close()`: Ghidra's `DomainObjectAdapter.addConsumer` does not
+de-duplicate, so re-opening on every refresh stacked consumers that were never
+released.
 
 ### 8. GUI restart timeout
 Ghidra GUI startup (JVM boot + window + project load) regularly takes 60–120 s on cold
@@ -211,8 +219,8 @@ function-level progress tracking and bookmarks for address-level findings.
 
 ### 15. `_discover_instances()` socket glob and test isolation
 `cli._discover_instances()` (backing `list-instances` and `stop --all`) merges the
-session registry with a raw glob over `cli._SOCKET_SCAN_DIR` (the platform temporary
-directory) to catch endpoints from daemons that predate the registry, or were started
+session registry with a raw glob over `cli._SOCKET_SCAN_DIR` (`/tmp` on POSIX,
+`%LOCALAPPDATA%\ghidra-rpc` on Windows) to catch endpoints from daemons that predate the registry, or were started
 manually. Because endpoints always live in that directory
 (`session.socket_path_for_project` is not configurable),
 this glob is **not** covered by the `GHIDRA_RPC_STATE_DIR` env var that isolates the

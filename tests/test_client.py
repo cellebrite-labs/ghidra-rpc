@@ -14,6 +14,7 @@ from ghidra_rpc.client import DaemonError, DaemonNotRunning, send_request
 from ghidra_rpc.client import (
     _DEFAULT_SOCKET_TIMEOUT,
     _SOCKET_TIMEOUT_BUFFER,
+    _VERIFY_DECOMPILE_TIMEOUT,
     _derive_socket_timeout,
 )
 from ghidra_rpc import transport
@@ -92,20 +93,20 @@ class TestDeriveSocketTimeout:
     """Unit tests for the socket-timeout derivation logic."""
 
     def test_no_args_returns_default(self):
-        assert _derive_socket_timeout(None) == _DEFAULT_SOCKET_TIMEOUT
-        assert _derive_socket_timeout({}) == _DEFAULT_SOCKET_TIMEOUT
-        assert _derive_socket_timeout({"binary": "ls"}) == _DEFAULT_SOCKET_TIMEOUT
+        assert _derive_socket_timeout("decompile", None) == _DEFAULT_SOCKET_TIMEOUT
+        assert _derive_socket_timeout("decompile", {}) == _DEFAULT_SOCKET_TIMEOUT
+        assert _derive_socket_timeout("functions", {"binary": "ls"}) == _DEFAULT_SOCKET_TIMEOUT
 
     def test_timeout_arg_adds_buffer(self):
-        result = _derive_socket_timeout({"timeout": 180})
+        result = _derive_socket_timeout("decompile", {"timeout": 180})
         assert result == 180 + _SOCKET_TIMEOUT_BUFFER
 
     def test_analysis_timeout_arg_adds_buffer(self):
-        result = _derive_socket_timeout({"analysis_timeout": 300})
+        result = _derive_socket_timeout("load", {"analysis_timeout": 300})
         assert result == 300 + _SOCKET_TIMEOUT_BUFFER
 
     def test_takes_max_when_both_present(self):
-        result = _derive_socket_timeout({"timeout": 60, "analysis_timeout": 300})
+        result = _derive_socket_timeout("decompile", {"timeout": 60, "analysis_timeout": 300})
         assert result == 300 + _SOCKET_TIMEOUT_BUFFER
 
     def test_default_is_at_least_120(self):
@@ -117,8 +118,28 @@ class TestDeriveSocketTimeout:
 
     def test_small_op_timeout_still_exceeds_default(self):
         # A decompile --timeout 5 should still give a reasonable socket window.
-        result = _derive_socket_timeout({"timeout": 5})
+        result = _derive_socket_timeout("decompile", {"timeout": 5})
         assert result == 5 + _SOCKET_TIMEOUT_BUFFER
+
+    def test_load_with_unbounded_analysis_waits_without_limit(self):
+        # The server analyzes to completion; a fixed client limit would give
+        # up while the daemon keeps working and holding the handler lock.
+        assert _derive_socket_timeout("load", {"path": "/bin/ls"}) is None
+
+    def test_load_without_analysis_uses_default(self):
+        result = _derive_socket_timeout("load", {"path": "/bin/ls", "analyze": False})
+        assert result == _DEFAULT_SOCKET_TIMEOUT
+
+    @pytest.mark.parametrize("cmd", ["function_diff", "batch_edit_variables"])
+    def test_double_decompile_commands_wait_for_both(self, cmd):
+        assert _derive_socket_timeout(cmd, {"timeout": 100}) == 200 + _SOCKET_TIMEOUT_BUFFER
+        # Server default timeout (60 s) applies when the arg is absent.
+        assert _derive_socket_timeout(cmd, {}) == 120 + _SOCKET_TIMEOUT_BUFFER
+
+    @pytest.mark.parametrize("cmd", ["retype_variable", "rename_variable"])
+    def test_variable_edits_include_the_verify_decompile(self, cmd):
+        result = _derive_socket_timeout(cmd, {"timeout": 100})
+        assert result == 100 + _VERIFY_DECOMPILE_TIMEOUT + _SOCKET_TIMEOUT_BUFFER
 
 
 class TestSession:

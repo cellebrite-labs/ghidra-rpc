@@ -9,7 +9,8 @@ description: >
 
 # Ghidra RPC
 
-A CLI daemon that exposes Ghidra reverse engineering capabilities over a Unix domain socket.
+A CLI daemon that exposes Ghidra reverse engineering capabilities over a local socket
+(a Unix domain socket; token-authenticated loopback TCP on Windows).
 You interact with it by running `ghidra-rpc` commands via the bash tool - every command
 outputs JSON to stdout.
 
@@ -28,8 +29,9 @@ Before using any commands, verify the setup:
 1. **Is the daemon running?** Run `uv run ghidra-rpc status --project <path>`. If not running,
    the user needs to start it in a separate terminal: `uv run ghidra-rpc start --project /path/to/project.gpr`
    (blocking, human-only). The `--headless` flag skips the GUI. For non-blocking / automated
-   startup use `start --detach --headless` or `restart --headless`. Both commands accept
-   `--timeout SECS` (default: 60 s headless, 180 s GUI) and log daemon output to
+   startup use `start --detach --headless` or `restart --headless`. Both accept
+   `--timeout SECS` (seconds to wait for the daemon to respond; for `start` it only applies
+   with `--detach`; default: 60 s headless, 180 s GUI) and log daemon output to
    `/tmp/ghidra-rpc-<hash>.log` (`%LOCALAPPDATA%\ghidra-rpc\ghidra-rpc-<hash>.log`
    on Windows).
 2. **GUI mode: verify the correct project is active.** The daemon passes the `--project` path
@@ -42,20 +44,24 @@ Before using any commands, verify the setup:
    Cross-check the returned binary names against what you expect. If the names don't match
    (or a `warning` field appears in the response), stop and ask the user to open the correct
    project in Ghidra's Project window before proceeding.
-3. **GUI mode: open the binary in CodeBrowser.** In GUI mode the daemon discovers programs
-   via the running CodeBrowser tool. If the binary is in the project but not currently open
-   in CodeBrowser, `list-binaries` will return empty and all commands will fail with
-   "Binary not found". Use `list-project-programs` to see what's stored in the project,
-   then double-click the program in Ghidra's Project window to open it.
+3. **GUI mode: programs outside the project's root folder must be open in CodeBrowser.**
+   The daemon sees programs open in any running tool plus every program in the project's
+   root folder (which is where `load` puts them). A program in a project subfolder that
+   isn't open in CodeBrowser is invisible and commands fail with "Binary not found"; use
+   `list-project-programs` to see what's stored, then double-click it in Ghidra's Project
+   window.
 4. **Is `GHIDRA_INSTALL_DIR` set?** The daemon will fail loudly if this is missing.
 
 Once the daemon is running, all commands below work automatically. If the daemon dies,
-commands will attempt auto-restart from the saved session.
+commands will attempt auto-restart from the saved session. A clean `stop` deletes that
+session, so after it you need `start` (or `restart --headless`) again.
 
 ## Command Reference
 
-Every command accepts `--project <path>` (or reads `GHIDRA_RPC_PROJECT` env var).
-All output is JSON. Exit code 0 = success, 1 = error.
+Every command except `list-instances` and `stop --all` accepts `--project <path>` (or reads
+`GHIDRA_RPC_PROJECT`).
+All output is JSON. Exit code 0 = success, nonzero = error.
+Examples below omit the `cd <skill-dir> && uv run` prefix.
 
 ### Project Management
 
@@ -64,14 +70,20 @@ All output is JSON. Exit code 0 = success, 1 = error.
 | `ghidra-rpc start --project <gpr> [--headless] [--detach] [--ghidra-install-dir DIR]` | Start daemon (blocking by default; `--detach` backgrounds it) | `ghidra-rpc start -p /tmp/re.gpr --headless --detach` |
 | `ghidra-rpc stop --project <gpr>` | Stop the daemon | `ghidra-rpc stop -p /tmp/re.gpr` |
 | `ghidra-rpc status --project <gpr>` | Check if daemon is running | `ghidra-rpc status -p /tmp/re.gpr` |
-
-`status` output: `{running, socket, mode, mode_source, project, binaries}`. `binaries` is the loaded-binary list when the daemon is running, `null` when stopped (one-shot health check without a second `list-binaries` call). `mode_source` is
-`"running"` when the daemon is live, `"session"` when the mode is from the saved
-session only (daemon stopped), and `null` if no session exists.
+| `ghidra-rpc list-instances [--all]` | List running daemons and their projects (`--all` also lists registered-but-dead ones); use it to find the `--project` of a daemon that is already up | `ghidra-rpc list-instances` |
+| `ghidra-rpc stop --all` | Stop every running daemon | `ghidra-rpc stop --all` |
 | `ghidra-rpc restart --project <gpr> [--headless] [--timeout SECS] [--ghidra-install-dir DIR]` | Restart daemon in background (`--headless` to override mode) | `ghidra-rpc restart -p /tmp/re.gpr --headless` |
 | `ghidra-rpc list-binaries --project <gpr>` | List binaries loaded in daemon | `ghidra-rpc list-binaries -p /tmp/re.gpr` |
 | `ghidra-rpc list-project-programs --project <gpr>` | List all programs stored in the project repo (reads project folder, not CodeBrowser live state; returns `warning` if the active Ghidra project doesn't match) | `ghidra-rpc list-project-programs -p /tmp/re.gpr` |
 | `ghidra-rpc save [binary] --project <gpr>` | Save program(s) to disk (auto-save also runs after every write) | `ghidra-rpc save -p /tmp/re.gpr` |
+
+`status` output: `{running, socket, mode, mode_source, project, binaries}`. `binaries` is the
+loaded-binary list when the daemon is running, `null` when stopped (one-shot health check
+without a second `list-binaries` call). `mode_source` is `"running"` when the daemon is live,
+`"session"` when the mode is from the saved session only (daemon died without a clean
+`stop`), and `null` if no session exists (never started, or cleanly stopped).
+
+`list-instances` output: `{instances: [{running, socket, project, mode, pid}], count}`.
 
 ### Loading & Analysis
 
@@ -85,6 +97,8 @@ session only (daemon stopped), and `null` if no session exists.
   listing or plan to run analysis later via Ghidra GUI).
 - `--analysis-timeout SECS` - abort auto-analysis after the given wall-clock budget
   (best-effort); the binary is saved with whatever analysis completed in time.
+  Without it, `load` waits for analysis to finish however long it takes — on large
+  binaries, pass it or run `load` in the background so your shell doesn't block.
 
 ### Listing
 
@@ -116,11 +130,10 @@ auto-named `FUN_00101139`.
 
 `search-decompiled` is especially useful on multidex Android projects, where `xrefs-to`
 on a method only sees callers within the same DEX program (see the Android APK/DEX
-section) — use it in place of a symbols+decompile+grep loop, e.g. `search-decompiled
-app.apk targetF1 --class
-com::example::Foo`. `--max-scan` (default 5000) bounds how many functions get decompiled
-when `--class` isn't given, so a search on a 50k+-function binary can't run away; raise
-`--socket-timeout` (default 1800s) alongside it if you do widen the scan.
+section) — use it in place of a symbols+decompile+grep loop, e.g.
+`search-decompiled app.apk targetF1 --class com::example::Foo`. `--max-scan` (default 5000)
+caps how many functions get decompiled per call, so a search on a 50k+-function binary can't
+run away; raise `--socket-timeout` (default 1800s) alongside it if you do widen the scan.
 
 **Check coverage before concluding "no matches".** `truncated: true` means only
 `scanned_range` was searched, not the whole binary. Resume with
@@ -132,7 +145,7 @@ until `next_unscanned_address` is `null`.
 | Command | Description | Output shape |
 |---------|-------------|--------------|
 | `ghidra-rpc find-bytes <binary> <pattern> [--limit N] [--address ADDR]` | Search for byte pattern with wildcards (e.g. `"55 8b ?? 83 ec"`) | `{pattern, matches: [{address, context_hex}], count, truncated}` |
-| `ghidra-rpc strings <binary> <query> [--limit N]` | Search strings (substring) | `{strings: [{address, value, type}], count}` |
+| `ghidra-rpc strings <binary> [query] [--limit N]` | Search strings (substring; omit the query to list all) | `{strings: [{address, value, type}], count}` |
 | `ghidra-rpc symbols <binary> <query> [--limit N] [--offset N]` | Search symbols | `{symbols: [{name, address, type}], count, total}` |
 
 `symbols` normalizes literal spaces and underscores as equivalent before matching, so a
@@ -183,7 +196,7 @@ which binary it came from.
 | `ghidra-rpc rename-function <binary> <target> <new_name> [--namespace NS]` | Rename function; `--namespace` moves it into a namespace | `{address, old_name, new_name, verified[, old_namespace, new_namespace]}` |
 | `ghidra-rpc rename-symbol <binary> <address> <new_name> [--create]` | Rename symbol; `--create` makes a new label if none exists | `{address, old_name, new_name, created, verified}` |
 | `ghidra-rpc create-label <binary> <address> <name>` | Create-or-rename a label at any address (upsert) | `{address, name, old_name, action, created, verified}` |
-| `ghidra-rpc set-comment <binary> <address> --comment <text> [--type TYPE]` | Set comment (comment text is `--comment`, matching `set-bookmark`) | `{address, comment_type, comment, verified}` |
+| `ghidra-rpc set-comment <binary> <address> --comment <text> [--type TYPE]` | Set comment at a `0x` address, or at a function's entry if given its name (comment text is `--comment`, matching `set-bookmark`) | `{address, comment_type, comment, verified}` |
 | `ghidra-rpc batch-rename <binary> --json \|--json-file FILE [--mode function\|label]` | Rename 40+ functions/labels in one transaction; per-item error reporting | `{results:[{ok, index, address, old_name, new_name}], count, ok_count, error_count}` |
 | `ghidra-rpc batch-set-comment <binary> --json \|--json-file FILE` | Set comments at many addresses in one transaction | `{results:[{ok, index, address, comment_type, comment}], count, ok_count, error_count}` |
 | `ghidra-rpc set-signature <binary> <target> <signature>` | Set function signature | `{address, old_signature, new_signature, verified}` |
@@ -262,28 +275,31 @@ and track analysis progress.
 | `ghidra-rpc create-struct <binary> <name> TYPE FIELD [TYPE FIELD ...] [--if-not-exists\|--or-replace]` | Create a named struct; `--if-not-exists` is idempotent, `--or-replace` rebuilds it | `{name, path, size, fields:[...], already_existed}` |
 | `ghidra-rpc create-struct <binary> <name> --field OFFSET TYPE NAME [--field ...]` | Create a struct laying fields at explicit byte offsets (OFFSET is decimal or 0x hex); gaps between fields are auto-padded with undefined bytes (no manual pad fields). Overlaps are rejected. | `{name, path, size, fields:[...], already_existed}` |
 | `ghidra-rpc create-union <binary> <name> TYPE FIELD [TYPE FIELD ...] [--if-not-exists\|--or-replace]` | Create a named union; all fields share offset 0 | `{name, path, size, fields:[...], already_existed}` |
-| `ghidra-rpc modify-struct <binary> <struct_name> --field-offset N\|--field-name NAME [--new-type TYPE] [--new-name NAME]` | Retype, rename, or re-comment a struct field | `{name, path, size, fields:[...], modified_field:{...}}` |
+| `ghidra-rpc modify-struct <binary> <struct_name> --field-offset N\|--field-name NAME [--new-type TYPE] [--new-name NAME] [--new-comment TEXT]` | Retype, rename, or re-comment a struct field (`--field-offset` is decimal) | `{name, path, size, fields:[...], modified_field:{...}}` |
 | `ghidra-rpc clear-data-range <binary> <start> <end>` | Reset inclusive byte range to undefined | `{start, end, cleared}` |
 | `ghidra-rpc apply-data-type-range <binary> <start> <end> <type> [--clear]` | Stamp a type repeatedly across an inclusive range; `--clear` clears the region atomically before stamping | `{start, end, data_type, type_size, applied_count, cleared}` |
 | `ghidra-rpc list-labels <binary> <address> [--end ADDR] [--limit N]` | List symbols at an address or in a range, including data type at each location | `{labels:[{address,name,type,source,is_primary,data_type,data_length}], count, total}` |
-| `ghidra-rpc create-enum <binary> <name> NAME VAL [NAME VAL ...] [--size 1|2|4|8] [--if-not-exists|--or-replace]` | Create a named enum in the DTM | `{name, path, size, values:[{name,value}], already_existed}` |
+| `ghidra-rpc create-enum <binary> <name> NAME VAL [NAME VAL ...] [--size 1\|2\|4\|8] [--if-not-exists\|--or-replace]` | Create a named enum in the DTM | `{name, path, size, values:[{name,value}], already_existed}` |
 | `ghidra-rpc modify-enum <binary> <name> [--add NAME:VAL ...] [--remove NAME ...]` | Add/remove individual entries from an existing enum | `{name, path, size, values:[{name,value}]}` |
 | `ghidra-rpc set-equate <binary> <addr> <equate_name> <value> [--operand-index N] [--enum-path PATH]` | Attach a named scalar constant to an instruction operand; auto-links to enum if found | `{address, operand_index, equate_name, value, enum_linked, verified}` |
 | `ghidra-rpc list-equates <binary> [address] [--limit N]` | List all equates in the program or only those applied at an address | `{equates:[{name,value[,operand_index,address]}], count, total}` |
-| `ghidra-rpc list-data-types <binary> [--category CAT] [--query SUBSTR] [--limit N]` | List types in the DTM; category: struct, enum, union, typedef, pointer, array, all | `{data_types:[{name,path,category,size}], count, total}` |
+| `ghidra-rpc list-data-types <binary> [--category CAT] [--query SUBSTR] [--limit N]` | List types in the DTM; category: struct, enum, union, typedef, pointer, array, other, all | `{data_types:[{name,path,category,size}], count, total}` |
 
 ### Version Tracking & Diff
 
 | Command | Description | Output shape |
 |---------|-------------|--------------|
-| `ghidra-rpc version-track <old> <new> [--changed-only] [--limit N] [--min-similarity F]` | Match functions between two versions; find what changed. Results deduplicated per source function. | `{matched:[{source_name,destination_name,similarity,confidence,correlator}], unmatched_source, unmatched_destination, summary:{source_functions_total, changed_functions, identical_functions, ...}}` |
-| `ghidra-rpc function-diff <bin1> <func1> <bin2> <func2> [--mode decompile\|disassembly]` | Unified diff of a function between two versions; normalises auto-generated names (`FUN_*`, `DAT_*`, `local_*`, `param_*`) to suppress relocation noise | `{is_identical, diff, raw_code1, raw_code2, func1_address, func2_address}` |
-| `ghidra-rpc match-function <bin1> <func> <bin2> [--threshold F]` | Find best match for a function in another binary using BSim + correlators | `{source:{name,address}, candidates:[{name,address,similarity,confidence,correlator}], count}` |
+| `ghidra-rpc version-track <old> <new> [--changed-only] [--limit N] [--min-similarity F] [--include-data] [--socket-timeout SECS]` | Match functions between two versions; find what changed. Results deduplicated per source function. | `{matched:[{source_name,destination_name,similarity,confidence,correlator}], unmatched_source, unmatched_destination, summary:{source_functions_total, changed_functions, identical_functions, ...}}` |
+| `ghidra-rpc function-diff <bin1> <func1> <bin2> <func2> [--mode decompile\|disassembly] [--timeout SECS]` | Unified diff of a function between two versions; normalises auto-generated names (`FUN_*`, `DAT_*`, `local_*`, `param_*`) to suppress relocation noise | `{is_identical, diff, raw_code1, raw_code2, func1_address, func2_address}` |
+| `ghidra-rpc match-function <bin1> <func> <bin2> [--threshold F] [--socket-timeout SECS]` | Find best match for a function in another binary using BSim + correlators | `{source:{name,address}, candidates:[{name,address,similarity,confidence,correlator}], count}` |
 | `ghidra-rpc decompile-all <binary> [--limit N] [--offset N] [--timeout SECS] [--socket-timeout SECS]` | Bulk decompile all functions; for export and external diff tools | `{functions:[{name,address,signature,c_code}], count, total, offset, errors}` |
 
 `decompile-all`'s default `--socket-timeout` (1800s) assumes a bulk sweep can take much
 longer than any single function's `--timeout`; raise it further for binaries with tens of
 thousands of functions (e.g. large DEX/APK programs).
+
+`version-track` and `match-function` are headless-only and need two different loaded
+binaries; their `--socket-timeout` defaults to 1800s.
 
 For the full patch-diff workflow see `docs/flows/patch-analysis.md`.
 
@@ -291,7 +307,7 @@ For the full patch-diff workflow see `docs/flows/patch-analysis.md`.
 
 Error responses look like:
 ```json
-{"id": "...", "ok": false, "error": "FunctionNotFound", "message": "Function 'foo' not found."}
+{"id": "...", "ok": false, "error": "ValueError", "message": "Function 'foo' not found. ..."}
 ```
 
 Common errors:
@@ -309,13 +325,16 @@ exit code — never a plain-text Click usage string. Scripted callers can always
 
 ## Write Operations & Persistence
 
-Write operations (rename, create-label, create-function, delete-function, set-comment, batch-rename, batch-set-comment, set-signature, set-data-type, retype-variable, rename-variable, batch-edit-variable, set-calling-convention, set-thunk, set-flow-override, set-processor-context, create-struct, create-union, modify-struct, create-enum, modify-enum, set-equate, set-bookmark, clear-data-range, apply-data-type-range, write-bytes, assemble, tag-function, untag-function, create-namespace)
+Write operations (rename-function, rename-symbol, create-label, create-function, delete-function, set-comment, batch-rename, batch-set-comment, set-signature, set-data-type, retype-variable, rename-variable, batch-edit-variable, set-calling-convention, set-thunk, set-flow-override, set-processor-context, create-struct, create-union, modify-struct, create-enum, modify-enum, set-equate, set-bookmark, remove-bookmark, clear-data-range, apply-data-type-range, write-bytes, assemble, tag-function, untag-function, create-namespace)
 use Ghidra transactions internally. **Every write is automatically saved to the project
 database on disk** after the transaction commits, so changes survive daemon restarts and
 are visible when the project is reopened in the Ghidra GUI.
 
-Every write response includes a `verified` boolean that confirms whether the change was
-read back successfully after committing.
+Most single-item edits (`rename-function`, `rename-symbol`, `create-label`, `set-comment`,
+`set-signature`, `retype-variable`, `rename-variable`, `set-calling-convention`, `set-thunk`,
+`set-flow-override`, `set-equate`, `set-processor-context`, `write-bytes`, and each
+`batch-edit-variable` result) include a `verified` boolean that confirms the change was read
+back after committing. `verified: false` also prints a warning on stderr.
 
 You can also save explicitly at any time:
 ```bash
@@ -423,9 +442,9 @@ If two binaries share the same stem, use the full key to disambiguate.
 **Trailing semicolons in signatures**: Ghidra's parser rejects C prototypes that end
 with `;`. ghidra-rpc strips trailing semicolons automatically, so you can paste verbatim.
 
-**`list-binaries` is empty but I loaded a binary**: In GUI mode, the binary must be
-open in CodeBrowser. Use `list-project-programs` to see what's stored in the project
-repo, then open it in CodeBrowser's Project window.
+**`list-binaries` is missing a program in GUI mode**: The daemon sees programs open in a
+running tool plus those in the project's root folder. For a program in a subfolder, use
+`list-project-programs` to find it, then open it in CodeBrowser from the Project window.
 
 **Daemon log file**: When started in the background (`start --detach` or `restart`),
 logs are written to `/tmp/ghidra-rpc-<hash>.log` — same directory and stem as the
@@ -440,7 +459,10 @@ The timeout error message always prints the exact log path, on every platform.
 **`GHIDRA_INSTALL_DIR` not found after backgrounding**: Environment variables may be
 lost when daemonising (nohup, cron, systemd units, etc.). Fix options, in order of preference:
 1. Pass `--ghidra-install-dir /path/to/ghidra` to `start` or `restart` - the value is
-   persisted in the session file and forwarded to every subsequent restart automatically.
+   persisted in the session file and reused by auto-restart and `restart` for as long as
+   that session exists. A clean `stop` deletes the session, so the next `start` takes the
+   flag or env var afresh — that is how you switch to a different Ghidra version
+   (`restart --ghidra-install-dir NEW` also overrides it).
 2. Export `GHIDRA_INSTALL_DIR` in your shell profile (`~/.bashrc`, `~/.zshrc`) so it
    survives login sessions.
 3. Use `start --detach --headless` from the same terminal where the env var is set.
@@ -464,7 +486,7 @@ a fresh headless session instead of requiring a prior `start`.
 **Decompiler timeout on certain functions**: Some functions trigger expensive
 decompiler analysis paths and time out even with simple assembly. Use
 `decompile --timeout 300` (or higher) for stubborn functions. The default timeout
-is **120 s** (increased from 60 s to handle large firmware functions). The
+is **120 s**. The
 `retype-variable` and `rename-variable` commands also accept `--timeout` since it
 triggers an internal decompilation pass.
 
@@ -481,20 +503,20 @@ fails. High P-code also reveals all CALL / CALLIND / BRANCHIND targets and data
 flow, making it useful for tracing arguments even without valid decompilation.
 Fix the root cause with `set-processor-context` (see below).
 
-**`disassemble` starts from the wrong address** (B2 warning):
+**`disassemble` starts from the wrong address**:
 If `disassemble` is called at an address with no instruction (e.g. an address
-that is mid-instruction or undefined), the response now includes a `warning`
+that is mid-instruction or undefined), the response includes a `warning`
 field explaining that disassembly started from the next available instruction.
 Check for `warning` in the JSON response when the listing looks wrong.
 
-**ARM Thumb mis-classification — `set-processor-context` is the fix** (F1/F5):
+**ARM Thumb mis-classification — `set-processor-context` is the fix**:
 When ARM auto-analysis classifies Thumb code as data, the listing disassembler
 decodes it as 32-bit ARM (TMode=0) and produces garbage. The full recovery
 workflow:
 ```bash
 # 1. Diagnose: check TMode at the affected address
 ghidra-rpc get-processor-context binary 0x03288100 --register TMode
-# Expected: {"TMode": 0}  ← this is the problem
+# Result: {"address": "0x03288100", "registers": {"TMode": 0}}  ← TMode 0 is the problem
 
 # 2. Clear the bad data/code classification
 ghidra-rpc clear-data-range binary 0x03288100 0x032883ff
@@ -511,7 +533,7 @@ ghidra-rpc create-function binary 0x03288100
 If `create-function` fails because a bad stub still exists at the address,
 use `delete-function` first to remove it.
 
-**Bad stubs blocking re-creation — use `delete-function`** (F2):
+**Bad stubs blocking re-creation — use `delete-function`**:
 If `create-function 0x03288103` (wrong parity) left a stub, and now
 `create-function 0x03288102` (correct address) fails with *"already exists at
 overlapping address"*, delete the bad stub first:
@@ -520,7 +542,7 @@ ghidra-rpc delete-function binary 0x03288103
 ghidra-rpc create-function  binary 0x03288102
 ```
 
-**Batch rename / comment 40+ functions without round-trip overhead** (F7):
+**Batch rename / comment 40+ functions without round-trip overhead**:
 Use `batch-rename` and `batch-set-comment` to apply many annotations in a single
 server round-trip and Ghidra transaction:
 ```bash
@@ -559,7 +581,6 @@ At the end of any analysis session where you hit a problem, save a brief report:
 cat > /tmp/ghidra-rpc-issues-$(date +%Y%m%d-%H%M%S).md << 'EOF'
 ## ghidra-rpc Issue Report
 
-**Date:** $(date)
 **Binary:** <name of binary analysed>
 
 ### Bugs encountered
