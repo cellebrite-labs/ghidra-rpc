@@ -101,14 +101,6 @@ class TestDeriveSocketTimeout:
         result = _derive_socket_timeout("decompile", {"timeout": 180})
         assert result == 180 + _SOCKET_TIMEOUT_BUFFER
 
-    def test_analysis_timeout_arg_adds_buffer(self):
-        result = _derive_socket_timeout("load", {"analysis_timeout": 300})
-        assert result == 300 + _SOCKET_TIMEOUT_BUFFER
-
-    def test_takes_max_when_both_present(self):
-        result = _derive_socket_timeout("decompile", {"timeout": 60, "analysis_timeout": 300})
-        assert result == 300 + _SOCKET_TIMEOUT_BUFFER
-
     def test_default_is_at_least_120(self):
         # Regression guard: default must not shrink below 2 minutes.
         assert _DEFAULT_SOCKET_TIMEOUT >= 120.0
@@ -121,14 +113,16 @@ class TestDeriveSocketTimeout:
         result = _derive_socket_timeout("decompile", {"timeout": 5})
         assert result == 5 + _SOCKET_TIMEOUT_BUFFER
 
-    def test_load_with_unbounded_analysis_waits_without_limit(self):
-        # The server analyzes to completion; a fixed client limit would give
-        # up while the daemon keeps working and holding the handler lock.
-        assert _derive_socket_timeout("load", {"path": "/bin/ls"}) is None
-
-    def test_load_without_analysis_uses_default(self):
-        result = _derive_socket_timeout("load", {"path": "/bin/ls", "analyze": False})
-        assert result == _DEFAULT_SOCKET_TIMEOUT
+    @pytest.mark.parametrize("args", [
+        {"path": "/bin/ls"},
+        {"path": "/bin/ls", "analysis_timeout": 30},
+        {"path": "/bin/ls", "analyze": False},
+    ])
+    def test_load_waits_without_limit(self, args):
+        # Import and save are unbounded on the server (analysis too, unless
+        # capped); a fixed client limit would give up while the daemon keeps
+        # working and holding the handler lock.
+        assert _derive_socket_timeout("load", args) is None
 
     @pytest.mark.parametrize("cmd", sorted(DOUBLE_DECOMPILE_COMMANDS))
     def test_double_decompile_commands_wait_for_both(self, cmd):
@@ -195,6 +189,19 @@ class TestSession:
     def test_load_missing(self, tmp_path):
         from ghidra_rpc.session import load
         assert load(tmp_path / "nonexistent.gpr") is None
+
+    @pytest.mark.parametrize("content", [
+        "not json",
+        '{"mode": "headless"}',
+        '{"mode": "headless", "project_gpr": null, "socket_path": "/tmp/x.sock"}',
+        '["headless"]',
+    ])
+    def test_load_malformed_is_none(self, tmp_path, monkeypatch, content):
+        from ghidra_rpc.session import load, session_file_path
+        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path))
+        gpr = tmp_path / "p.gpr"
+        session_file_path(gpr).write_text(content, encoding="utf-8")
+        assert load(gpr) is None
 
 
 class TestAutoRestart:
@@ -269,3 +276,35 @@ class TestStopWait:
         monkeypatch.setattr(daemon, "_pid_alive", lambda pid: False)
         with pytest.raises(TimeoutError, match="did not shut down"):
             daemon.wait_stopped(sock, 0, timeout=0.3)
+
+    def test_wait_stopped_ignores_a_stale_endpoint_once_the_process_is_gone(
+            self, tmp_path, monkeypatch):
+        # A daemon killed mid-shutdown leaves its endpoint behind.
+        from ghidra_rpc import daemon
+        sock = tmp_path / "stale.sock"
+        sock.touch()
+        monkeypatch.setattr(daemon, "_pid_alive", lambda pid: False)
+        daemon.wait_stopped(sock, 1234, timeout=0.3)
+
+    @pytest.mark.parametrize("ping, stop_reply, expected", [
+        # The stop reply carries the pid even when the ping timed out ...
+        (TimeoutError("timed out"), {"status": "stopping", "pid": 4321}, 4321),
+        # ... and an older daemon's ping supplies it when the reply doesn't.
+        ({"status": "alive", "pid": 77}, {"status": "stopping"}, 77),
+        (TimeoutError("timed out"), {"status": "stopping"}, 0),
+    ])
+    def test_request_stop_pid(self, tmp_path, monkeypatch, ping, stop_reply, expected):
+        from ghidra_rpc import client, daemon
+
+        def fake_send(sock, cmd, args=None, **kw):
+            reply = ping if cmd == "ping" else stop_reply
+            if isinstance(reply, Exception):
+                raise reply
+            return {"ok": True, "result": reply}
+
+        monkeypatch.setattr(client, "send_request", fake_send)
+        assert daemon.request_stop(tmp_path / "d.sock") == expected
+
+    def test_request_stop_when_not_running(self, tmp_path):
+        from ghidra_rpc import daemon
+        assert daemon.request_stop(tmp_path / "missing.sock") is None

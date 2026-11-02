@@ -91,13 +91,14 @@ def save(session: Session) -> None:
 
 
 def load(gpr: Path) -> Session | None:
-    """Load a previously saved session, or return None if not found."""
+    """Load a previously saved session, or return None if not found or
+    malformed."""
     path = session_file_path(gpr)
     if not path.exists():
         return None
     try:
         return Session.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, TypeError):
         return None
 
 

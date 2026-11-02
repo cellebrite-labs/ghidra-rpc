@@ -213,34 +213,40 @@ def request_stop(socket_path: Path) -> int | None:
     """Ask a running daemon to stop without waiting for it.
 
     Returns None if no daemon was running, else its pid (0 if unknown), for
-    ``wait_stopped``.  The daemon acknowledges *before* it shuts down.
+    ``wait_stopped``.  The daemon acknowledges *before* it shuts down; its
+    reply carries the pid.  A daemon from before that change only reports
+    its pid to ``ping``, so ping first as a fallback.
     """
     from ghidra_rpc.client import send_request, DaemonNotRunning
 
     try:
-        pid = int(send_request(socket_path, "ping", socket_timeout=5.0)
-                  ["result"].get("pid") or 0)
+        pid = send_request(socket_path, "ping", socket_timeout=5.0)["result"].get("pid")
     except DaemonNotRunning:
         return None
     except Exception:
-        pid = 0
+        pid = None
     try:
-        send_request(socket_path, "stop")
+        pid = send_request(socket_path, "stop")["result"].get("pid") or pid
     except DaemonNotRunning:
         return None
     except Exception:
         pass  # the daemon may close the connection before responding
-    return pid
+    return int(pid or 0)
 
 
 def wait_stopped(socket_path: Path, pid: int, timeout: float) -> None:
-    """Block until a daemon told to stop has shut down: its endpoint is gone
-    (until then the dying daemon still answers pings, so a new start would
-    mistake it for itself) and its process has exited (in GUI mode Ghidra
-    closes the project, releasing its lock, only after the endpoint is gone).
-    Raises TimeoutError after *timeout* seconds."""
+    """Block until a daemon told to stop has shut down, or raise TimeoutError
+    after *timeout* seconds.
+
+    With a known *pid*, that is when its process has exited: in GUI mode
+    Ghidra closes the project, releasing its lock, only after the endpoint
+    is gone, and an endpoint left behind by a killed process is stale (the
+    next ``listen()`` replaces it).  Without one, wait for the endpoint to
+    go, since until then the dying daemon still answers pings and a new
+    start would mistake it for itself.
+    """
     deadline = time.time() + timeout
-    while socket_path.exists() or (pid and _pid_alive(pid)):
+    while _pid_alive(pid) if pid else socket_path.exists():
         if time.time() >= deadline:
             raise TimeoutError(
                 f"Daemon at {socket_path} acknowledged stop but did not shut "

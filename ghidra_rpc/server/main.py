@@ -102,7 +102,8 @@ def _handle_connection(
                 },
             }
         elif cmd == "stop":
-            response = {"id": req_id, "ok": True, "result": {"status": "stopping"}}
+            response = {"id": req_id, "ok": True,
+                        "result": {"status": "stopping", "pid": os.getpid()}}
             conn.sendall((json.dumps(response) + "\n").encode())
             shutdown_event.set()
             return

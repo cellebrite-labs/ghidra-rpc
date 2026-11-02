@@ -19,6 +19,17 @@ from ghidra_rpc.server.tools._common import (
 )
 
 
+def _remove_data_type(dtm, data_type) -> None:
+    """Remove *data_type* from *dtm*.  Ghidra 12.2 dropped the
+    ``remove(DataType, TaskMonitor)`` overload (12.0 and 12.1 have both);
+    fall back to it for older releases that may lack ``remove(DataType)``."""
+    try:
+        dtm.remove(data_type)
+    except TypeError:  # JPype: no matching overload
+        from ghidra.util.task import TaskMonitor
+        dtm.remove(data_type, TaskMonitor.DUMMY)
+
+
 # ── create-struct ─────────────────────────────────────────────────────────────
 
 def _coerce_offset(value):
@@ -91,7 +102,6 @@ def _handle_create_struct(ctx, args: dict) -> dict:
             DataTypeConflictHandler,
             StructureDataType,
         )
-        from ghidra.util.task import TaskMonitor
 
         dtm = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{struct_name}")
@@ -240,7 +250,7 @@ def _handle_create_struct(ctx, args: dict) -> dict:
             pi.program, f"ghidra-rpc: create struct {struct_name}"
         ):
             if to_replace is not None:
-                dtm.remove(to_replace, TaskMonitor.DUMMY)
+                _remove_data_type(dtm, to_replace)
             added = (_apply_explicit(*explicit_layout) if explicit
                      else _build_struct())
 
@@ -539,7 +549,6 @@ def _handle_create_enum(ctx, args: dict) -> dict:
             DataTypeConflictHandler,
             EnumDataType,
         )
-        from ghidra.util.task import TaskMonitor
 
         dtm      = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{enum_name}")
@@ -578,7 +587,7 @@ def _handle_create_enum(ctx, args: dict) -> dict:
             pi.program, f"ghidra-rpc: create enum {enum_name}"
         ):
             if to_replace is not None:
-                dtm.remove(to_replace, TaskMonitor.DUMMY)
+                _remove_data_type(dtm, to_replace)
             added = dtm.addDataType(enum_dt, DataTypeConflictHandler.DEFAULT_HANDLER)
 
         return {
@@ -976,7 +985,6 @@ def _handle_create_union(ctx, args: dict) -> dict:
             DataTypeConflictHandler,
             UnionDataType,
         )
-        from ghidra.util.task import TaskMonitor
 
         dtm = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{union_name}")
@@ -1030,7 +1038,7 @@ def _handle_create_union(ctx, args: dict) -> dict:
             pi.program, f"ghidra-rpc: create union {union_name}"
         ):
             if to_replace is not None:
-                dtm.remove(to_replace, TaskMonitor.DUMMY)
+                _remove_data_type(dtm, to_replace)
             added = _build_union()
 
         return {

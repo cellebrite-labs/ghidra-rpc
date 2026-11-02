@@ -189,19 +189,31 @@ def _resolve_address(pi, target: str):
     # In ELF binaries an imported function like 'malloc' has both a PLT thunk at a real
     # code address AND an entry in the EXTERNAL address space.  Callers reference the PLT
     # thunk, so we must prefer that address for xref lookups.
-    st = prog.getSymbolTable()
     external_fallback = None
-    for sym in st.getAllSymbols(False):
-        if str(sym.getName()).lower() == target.lower():
-            addr = sym.getAddress()
-            if not addr.getAddressSpace().isExternalSpace():
-                return addr  # non-external (PLT thunk / IAT entry) — use immediately
-            if external_fallback is None:
-                external_fallback = addr
+    for sym in _symbols_named(prog.getSymbolTable(), target):
+        addr = sym.getAddress()
+        if not addr.getAddressSpace().isExternalSpace():
+            return addr  # non-external (PLT thunk / IAT entry) — use immediately
+        if external_fallback is None:
+            external_fallback = addr
 
     if external_fallback is not None:
         return external_fallback
     return _pick_function(target, exact, partial).getEntryPoint()
+
+
+def _symbols_named(symbol_table, name: str):
+    """Yield the symbols named *name*: from the (case-sensitive) name index,
+    or only if it has none, a case-insensitive scan of every symbol."""
+    found = False
+    for sym in symbol_table.getSymbols(name):
+        found = True
+        yield sym
+    if not found:
+        name_lower = name.lower()
+        for sym in symbol_table.getAllSymbols(False):
+            if str(sym.getName()).lower() == name_lower:
+                yield sym
 
 
 def _one_function_family(funcs) -> bool:

@@ -25,12 +25,7 @@ class DaemonError(Exception):
         self.full_response = full_response
 
 
-# Keys in the request args dict that carry a user-visible operation timeout.
-# The socket timeout is set to max(these values) + _SOCKET_TIMEOUT_BUFFER so
-# the network layer never fires before the server has finished the operation.
-_TIMEOUT_ARG_KEYS = ("timeout", "analysis_timeout")
-
-# Default socket timeout when no operation-level timeout is present.
+# Default socket timeout when the request has no ``timeout`` arg.
 _DEFAULT_SOCKET_TIMEOUT: float = 120.0
 
 # Extra seconds added on top of the operation timeout to give the server time
@@ -45,28 +40,22 @@ def _derive_socket_timeout(cmd: str, args: dict | None) -> float | None:
     client never gives up while the daemon is still working (and holding the
     handler lock):
 
-    * ``load`` with analysis and no ``analysis_timeout`` -> ``None`` (no
-      limit), since the server runs analysis to completion.
+    * ``load`` -> ``None`` (no limit): importing and saving a binary have no
+      server-side bound, and analysis runs to completion unless
+      ``analysis_timeout`` caps it, so no fixed wait is safe.
     * Commands that decompile twice (``timeouts.DOUBLE_DECOMPILE_COMMANDS``)
       -> ``2 * timeout + buffer``.
-    * Otherwise, if ``args`` has ``timeout``/``analysis_timeout``,
-      ``max(those values) + _SOCKET_TIMEOUT_BUFFER``; else
-      ``_DEFAULT_SOCKET_TIMEOUT`` (120 s).
+    * Otherwise, if ``args`` has a ``timeout``, ``timeout +
+      _SOCKET_TIMEOUT_BUFFER``; else ``_DEFAULT_SOCKET_TIMEOUT`` (120 s).
     """
     args = args or {}
-    if (cmd == "load" and args.get("analyze", True)
-            and args.get("analysis_timeout") is None):
+    if cmd == "load":
         return None
     if cmd in DOUBLE_DECOMPILE_COMMANDS:
         timeout = float(args.get("timeout", DEFAULT_DECOMPILE_TIMEOUT))
         return 2 * timeout + _SOCKET_TIMEOUT_BUFFER
-    timeouts = [
-        float(args[k])
-        for k in _TIMEOUT_ARG_KEYS
-        if args.get(k) is not None
-    ]
-    if timeouts:
-        return max(timeouts) + _SOCKET_TIMEOUT_BUFFER
+    if args.get("timeout") is not None:
+        return float(args["timeout"]) + _SOCKET_TIMEOUT_BUFFER
     return _DEFAULT_SOCKET_TIMEOUT
 
 

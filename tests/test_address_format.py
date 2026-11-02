@@ -254,3 +254,20 @@ class TestResolveAddress:
             _symbol("g_config", label_addr)]
         assert _resolve(pi, "g_config") is label_addr
         assert pi.program.getFunctionManager.return_value.getFunctions.call_count == 1
+
+    def test_label_uses_the_name_index_before_scanning_every_symbol(self):
+        label_addr = MagicMock()
+        pi = _pi([_func("init_g_config")])
+        st = pi.program.getSymbolTable.return_value
+        st.getSymbols.return_value = [_symbol("g_config", label_addr)]
+        assert _resolve(pi, "g_config") is label_addr
+        st.getSymbols.assert_called_once_with("g_config")
+        st.getAllSymbols.assert_not_called()
+
+    def test_label_lookup_falls_back_to_a_case_insensitive_scan(self):
+        label_addr = MagicMock()
+        pi = _pi([])
+        st = pi.program.getSymbolTable.return_value
+        st.getSymbols.return_value = []
+        st.getAllSymbols.return_value = [_symbol("G_Config", label_addr)]
+        assert _resolve(pi, "g_config") is label_addr

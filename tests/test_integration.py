@@ -43,7 +43,6 @@ a C compiler on the test machine.
 from __future__ import annotations
 
 import os
-import time
 import uuid
 from pathlib import Path
 
@@ -95,7 +94,7 @@ def daemon(tmp_path_factory):
         main_name   -- name of the chosen entry-point function
     """
     from ghidra_rpc.client import DaemonError, send_request
-    from ghidra_rpc.daemon import start_background, stop_daemon
+    from ghidra_rpc.daemon import STOP_TIMEOUT, start_background, stop_daemon
     from ghidra_rpc.session import Session, socket_path_for_project
 
     tmp = tmp_path_factory.mktemp("ghidra_int")
@@ -158,7 +157,7 @@ def daemon(tmp_path_factory):
 
     # ── Teardown ──────────────────────────────────────────────────────────────
     try:
-        stop_daemon(sock)
+        stop_daemon(sock, wait=STOP_TIMEOUT)
     except Exception:
         pass
 
@@ -192,7 +191,7 @@ def test_reopen_from_saved_project_survives_abort_then_write(tmp_path):
     import shutil
 
     from ghidra_rpc.client import DaemonError, send_request
-    from ghidra_rpc.daemon import start_background, stop_daemon
+    from ghidra_rpc.daemon import STOP_TIMEOUT, start_background, stop_daemon
     from ghidra_rpc.session import Session, socket_path_for_project
 
     gpr = tmp_path / "reopen_test_project.gpr"
@@ -211,14 +210,9 @@ def test_reopen_from_saved_project_survives_abort_then_write(tmp_path):
         assert first["ok"] is True, first
         short_name = first["result"]["short_name"]
     finally:
-        stop_daemon(sock)
-
-    # stop_daemon() returns on the "stopping" ack, but the old daemon's socket
-    # can stay bound for ~1s afterward -- wait for it to vanish before starting
-    # a new one on the same project.
-    deadline = time.time() + 10
-    while sock.exists() and time.time() < deadline:
-        time.sleep(0.2)
+        # Wait for the old daemon to exit: it releases the project lock
+        # only after its socket is gone.
+        stop_daemon(sock, wait=STOP_TIMEOUT)
 
     start_background(session, timeout=_DAEMON_START_TIMEOUT)
     try:
@@ -255,7 +249,7 @@ def test_reopen_from_saved_project_survives_abort_then_write(tmp_path):
             f"program, was silently lost: {check['result']}"
         )
     finally:
-        stop_daemon(sock)
+        stop_daemon(sock, wait=STOP_TIMEOUT)
 
 
 # ── 1. Daemon connectivity ────────────────────────────────────────────────────

@@ -97,7 +97,7 @@ without a second `list-binaries` call). `mode_source` is `"running"` when the da
   listing or plan to run analysis later via Ghidra GUI).
 - `--analysis-timeout SECS` - abort auto-analysis after the given wall-clock budget
   (best-effort); the binary is saved with whatever analysis completed in time.
-  Without it, `load` waits for analysis to finish however long it takes — on large
+  Either way the CLI waits for the whole load (import, analysis, save) to finish — on large
   binaries, pass it or run `load` in the background so your shell doesn't block.
 
 ### Listing

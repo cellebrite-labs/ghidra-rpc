@@ -70,19 +70,27 @@
   type in the same transaction that builds the new one, so a definition that
   fails (e.g. an unknown field type) leaves the existing type intact instead
   of deleting it.
+- `create-struct`/`create-union`/`create-enum --or-replace` failed on Ghidra
+  12.2 with `TypeError: No matching overloads found for ...remove`; 12.2
+  dropped the `remove(DataType, TaskMonitor)` overload.
 - Name lookups for `set-comment`, `xrefs-to`/`xrefs-from` and `list-vtable`
   prefer an exact label over a function that merely contains the name
   (`g_config` no longer resolves to `init_g_config`), and report an
   ambiguous name when several distinct functions share it exactly (an
   import's PLT and intermediate thunks still count as one).
 - `stop`, `stop --all` and `restart` wait until the daemon has actually shut
-  down: its endpoint is gone and its process has exited (in GUI mode Ghidra
-  closes the project only after the endpoint is removed). `stop --all` asks
+  down: its process has exited (in GUI mode Ghidra closes the project only
+  after the endpoint is removed). The `stop` reply carries the daemon's pid
+  for this. `stop --all` asks
   every daemon first, so their shutdowns overlap. `restart` used to take
   the dying daemon's reply for the new one's and report success at once, so a
   quick second restart or command could start another daemon on the same
   project (`LockException: Unable to lock project!`). New errors:
   `StopTimeout`/`RestartTimeout` if shutdown takes over 120 s.
+- A malformed session file (e.g. `"project_gpr": null`) is treated as no
+  session instead of crashing `status` and auto-restart with a `TypeError`.
+- Label lookups by name use Ghidra's symbol-name index, scanning every
+  symbol (case-insensitively) only when no symbol has that exact name.
 - `modify-enum` accepts a `/`-prefixed name (the `path` `list-data-types`
   prints), like `modify-struct`.
 - `start --detach`/`restart` also report a daemon that cannot be launched at
@@ -98,8 +106,8 @@
   budget instead of a fixed 30 s, so a slow function no longer reports
   `verified: false` for an edit that applied.
 - The CLI no longer gives up on long-running commands while the daemon is
-  still working: `load` without `--analysis-timeout` waits for analysis to
-  finish (was 120 s); `function-diff` and `batch-edit-variable` wait for both
+  still working: `load` waits for import, analysis and save to finish (was
+  120 s, or `--analysis-timeout` + 30 s); `function-diff` and `batch-edit-variable` wait for both
   of their decompiles, as do `retype-variable`/`rename-variable` (edit plus
   verify).
 - `version-track` and `match-function` reject the same binary as both source
