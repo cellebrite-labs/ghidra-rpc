@@ -174,10 +174,12 @@ def send_request_with_auto_restart(
         )
 
     try:
-        daemon_mod.start_background(session)
-    except Exception:
+        daemon_mod.start_background(session)  # waits per the session's mode
+    except Exception as e:
         raise DaemonNotRunning(
-            f"Failed to restart daemon. Please run: ghidra-rpc start --project {project_gpr}"
+            f"Failed to restart daemon: {e}\n"
+            f"Check `ghidra-rpc status --project {project_gpr}` before starting "
+            "it again: a slow (GUI) start may still be in progress."
         )
 
     # Retry once after restart

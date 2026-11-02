@@ -41,7 +41,7 @@ def _handle_tag_function(ctx, args: dict) -> dict:
     """
     binary = args.get("binary", "")
     target = args.get("target", "")
-    tag    = args.get("tag", "")
+    tag    = args.get("tag", "").strip()
 
     if not target:
         raise ValueError("Missing required argument: target")
@@ -52,17 +52,11 @@ def _handle_tag_function(ctx, args: dict) -> dict:
 
     def do_tag():
         func = _find_function(pi, target)
-        fm = pi.program.getFunctionManager()
-        tag_mgr = fm.getFunctionTagManager()
 
         with ghidra_transaction(
             pi.program, f"ghidra-rpc: tag {func.getName()} with '{tag}'"
         ):
-            # Get or create the tag
-            tag_obj = tag_mgr.getFunctionTag(tag)
-            if tag_obj is None:
-                tag_obj = tag_mgr.createFunctionTag(tag, "")
-            func.addTag(tag.strip())
+            func.addTag(tag)   # creates the tag if it doesn't exist yet
 
         # Collect all tags after mutation
         all_tags = [str(t.getName()) for t in func.getTags()]
@@ -94,7 +88,7 @@ def _handle_untag_function(ctx, args: dict) -> dict:
     """
     binary = args.get("binary", "")
     target = args.get("target", "")
-    tag    = args.get("tag", "")
+    tag    = args.get("tag", "").strip()
 
     if not target:
         raise ValueError("Missing required argument: target")
@@ -186,7 +180,7 @@ def _handle_functions_by_tag(ctx, args: dict) -> dict:
         total     -- total matching functions
     """
     binary = args.get("binary", "")
-    tag    = args.get("tag", "")
+    tag    = args.get("tag", "").strip()
     limit  = int(args.get("limit", 200))
 
     if not tag:

@@ -54,12 +54,21 @@ def start_blocking(session: Session) -> None:
         session_mod.remove(session.project_gpr)
 
 
-def start_background(session: Session, timeout: float = 60.0) -> None:
+def default_start_timeout(mode: str) -> float:
+    """Seconds to wait for a background daemon to respond: GUI startup (JVM,
+    Ghidra window, project open) routinely takes 60-120 s on a cold machine."""
+    return 180.0 if mode == "gui" else 60.0
+
+
+def start_background(session: Session, timeout: float | None = None) -> None:
     """Start the daemon in the background and wait for the socket to appear.
 
-    Uses ghidra-rpcd entry point to daemonize. Waits up to `timeout` seconds
-    for the socket to become responsive.
+    Runs ``python -m ghidra_rpc.daemon`` detached. Waits up to ``timeout``
+    seconds (default: ``default_start_timeout(session.mode)``) for the socket
+    to become responsive.
     """
+    if timeout is None:
+        timeout = default_start_timeout(session.mode)
     from ghidra_rpc import session as session_mod
 
     session_mod.save(session)

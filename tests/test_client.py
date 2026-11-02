@@ -195,3 +195,36 @@ class TestSession:
     def test_load_missing(self, tmp_path):
         from ghidra_rpc.session import load
         assert load(tmp_path / "nonexistent.gpr") is None
+
+
+class TestAutoRestart:
+    """send_request_with_auto_restart when the daemon is down."""
+
+    def _gpr_with_session(self, tmp_path, monkeypatch, mode):
+        from ghidra_rpc import session as session_mod
+        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path / "state"))
+        gpr = tmp_path / "p.gpr"
+        session_mod.save(session_mod.Session(
+            mode=mode, project_gpr=gpr, socket_path=tmp_path / "missing.sock"))
+        return gpr
+
+    def test_gui_restart_waits_for_a_gui_start(self, tmp_path, monkeypatch):
+        from ghidra_rpc import daemon
+        from ghidra_rpc.client import send_request_with_auto_restart
+        gpr = self._gpr_with_session(tmp_path, monkeypatch, "gui")
+        seen = {}
+
+        def fake_start(session, timeout=None):
+            seen["timeout"] = timeout
+            seen["effective"] = (timeout if timeout is not None
+                                 else daemon.default_start_timeout(session.mode))
+            raise TimeoutError("still booting")
+
+        monkeypatch.setattr(daemon, "start_background", fake_start)
+        with pytest.raises(DaemonNotRunning) as exc_info:
+            send_request_with_auto_restart(gpr, "list_binaries")
+
+        assert seen["effective"] == daemon.default_start_timeout("gui") == 180.0
+        # The real cause is kept, and the advice doesn't push a second start.
+        assert "still booting" in str(exc_info.value)
+        assert "status" in str(exc_info.value)

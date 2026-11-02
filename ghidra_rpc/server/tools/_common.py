@@ -150,8 +150,9 @@ def _find_function(pi, name_or_address: str):
 
 
 def _resolve_address(pi, target: str):
-    """Resolve a target to a Ghidra Address: a 0x address as-is, else a
-    function's entry point, else a symbol (label) of that name.
+    """Resolve a target to a Ghidra Address: a 0x address as-is, else the
+    entry of a function with exactly that name, else a symbol (label) with
+    exactly that name, else a function whose name contains it.
 
     An address is used exactly (not snapped to its containing function).
     If nothing matches, the function lookup's error is raised, so an
@@ -162,12 +163,14 @@ def _resolve_address(pi, target: str):
     if _looks_like_address(target):
         return _parse_address(prog, target)
 
-    # Try as function
+    # An exact function name wins; a partial (substring) match only after
+    # labels, so "g_config" finds the label, not a function "init_g_config".
     try:
-        func = _find_function(pi, target)
-        return func.getEntryPoint()
+        func, function_error = _find_function(pi, target), None
     except ValueError as e:
-        function_error = e
+        func, function_error = None, e
+    if func is not None and str(func.getName()).lower() == target.lower():
+        return func.getEntryPoint()
 
     # Try as symbol — prefer non-external (e.g. PLT thunk) over EXTERNAL space symbols.
     # In ELF binaries an imported function like 'malloc' has both a PLT thunk at a real
@@ -185,6 +188,8 @@ def _resolve_address(pi, target: str):
 
     if external_fallback is not None:
         return external_fallback
+    if func is not None:
+        return func.getEntryPoint()
 
     raise function_error
 

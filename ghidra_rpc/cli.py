@@ -8,7 +8,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -172,7 +171,7 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
     By default starts in the foreground (blocking, shows logs). Use --detach
     to launch in the background and return once the socket is responsive.
     """
-    from ghidra_rpc.daemon import start_background, start_blocking
+    from ghidra_rpc.daemon import default_start_timeout, start_background, start_blocking
 
     gpr = _resolve_project(project)
     mode = "headless" if headless else "gui"
@@ -191,7 +190,7 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
     )
 
     if detach:
-        effective_timeout = timeout if timeout is not None else (180.0 if mode == "gui" else 60.0)
+        effective_timeout = timeout if timeout is not None else default_start_timeout(mode)
         try:
             start_background(session, timeout=effective_timeout)
             _json_output({"ok": True, "result": {"status": "started", "mode": mode, "socket": str(sock)}})
@@ -212,6 +211,10 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
                 })
             else:
                 _json_error("StartTimeout", str(e))
+        except RuntimeError as e:
+            # The daemon process exited during startup; the message carries
+            # its log tail (e.g. a bad GHIDRA_INSTALL_DIR).
+            _json_error("StartFailed", str(e))
     else:
         # Blocking foreground start — set GHIDRA_INSTALL_DIR in current process if given
         if ghidra_dir_path:
@@ -238,7 +241,7 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
 def restart(project: str | None, headless: bool | None, timeout: float | None,
             ghidra_install_dir: str | None):
     """Restart the daemon in the background."""
-    from ghidra_rpc.daemon import start_background, stop_daemon
+    from ghidra_rpc.daemon import default_start_timeout, start_background, stop_daemon
 
     gpr = _resolve_project(project)
     sock = session_mod.socket_path_for_project(gpr)
@@ -275,8 +278,8 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
     elif not session.ghidra_install_dir and os.environ.get("GHIDRA_INSTALL_DIR"):
         session.ghidra_install_dir = Path(os.environ["GHIDRA_INSTALL_DIR"])
 
-    # GUI mode (JVM + Ghidra + project open) takes significantly longer than headless.
-    effective_timeout = timeout if timeout is not None else (180.0 if session.mode == "gui" else 60.0)
+    effective_timeout = (timeout if timeout is not None
+                         else default_start_timeout(session.mode))
 
     try:
         start_background(session, timeout=effective_timeout)
@@ -301,6 +304,8 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
             })
         else:
             _json_error("RestartTimeout", str(e))
+    except RuntimeError as e:
+        _json_error("RestartFailed", str(e))
 
 
 @cli.command()
@@ -508,8 +513,12 @@ def _reject_option(token: str) -> None:
     """Fail on an option-looking token that isn't a number, for commands
     registered with ``negative_values=True`` (where Click passes unknown
     options through as arguments)."""
-    if token.startswith("-") and not re.fullmatch(r"-(0[xX][0-9a-fA-F]+|\d+)", token):
-        raise click.NoSuchOption(token)
+    if not token.startswith("-"):
+        return
+    try:
+        HEX_INT.convert(token, None, None)   # a negative number, as VALUEs parse it
+    except click.BadParameter:
+        raise click.NoSuchOption(token) from None
 
 
 def _parse_pairs(tokens: tuple, label: str, keys: tuple[str, str]) -> list[dict]:

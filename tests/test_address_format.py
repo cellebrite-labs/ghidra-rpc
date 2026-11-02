@@ -194,3 +194,23 @@ class TestResolveAddress:
         pi.program.getSymbolTable.return_value.getAllSymbols.return_value = []
         with pytest.raises(ValueError, match=r"Ambiguous function name 'helper'.*@ 0x"):
             _resolve(pi, "helper")
+
+    def test_exact_label_beats_a_partial_function_match(self):
+        label_addr = MagicMock()
+        pi = _pi([_func("init_g_config")])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("g_config", label_addr)]
+        assert _resolve(pi, "g_config") is label_addr
+
+    def test_partial_function_match_is_the_last_resort(self):
+        init = _func("init_g_config")
+        pi = _pi([init])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = []
+        assert _resolve(pi, "g_config") is init.getEntryPoint.return_value
+
+    def test_exact_function_name_beats_a_label(self):
+        main = _func("main")
+        pi = _pi([main])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("main", MagicMock())]
+        assert _resolve(pi, "main") is main.getEntryPoint.return_value

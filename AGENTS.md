@@ -39,7 +39,9 @@ ghidra-rpc/
 │   │                       _parse_pairs
 │   ├── client.py         — Local transport client (send_request, auto-restart logic)
 │   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background,
-│   │                       stop_daemon, is_running)
+│   │                       stop_daemon, is_running, default_start_timeout —
+│   │                       180 s GUI / 60 s headless, shared by start, restart
+│   │                       and auto-restart)
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
 │   │                       from session or current env to the child process.
 │   ├── session.py        — Session persistence

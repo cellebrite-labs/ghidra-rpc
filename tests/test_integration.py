@@ -1540,6 +1540,39 @@ class TestDataTypes:
         )
 
 
+    @pytest.mark.parametrize("cmd, good, bad, key", [
+        ("create_struct",
+         {"fields": [{"type": "int", "name": "kept"}]},
+         {"fields": [{"type": "int", "name": "x"}, {"type": "NoSuchType_zz", "name": "y"}]},
+         "fields"),
+        ("create_union",
+         {"fields": [{"type": "int", "name": "kept"}]},
+         {"fields": [{"type": "int", "name": "x"}, {"type": "NoSuchType_zz", "name": "y"}]},
+         "fields"),
+        ("create_enum",
+         {"values": [{"name": "kept", "value": 1}], "size": 1},
+         {"values": [{"name": "x", "value": 1}, {"name": "x", "value": 2}], "size": 1},
+         "values"),
+    ])
+    def test_failed_or_replace_keeps_the_existing_type(self, daemon, cmd, good, bad, key):
+        """--or-replace removes the old type in the same transaction as the
+        rebuild, so a definition that fails leaves the original intact."""
+        sock, binary = daemon["sock"], daemon["short_name"]
+        name = f"OrReplace_{cmd}_{uuid.uuid4().hex[:8]}"
+        rpc(sock, cmd, {"binary": binary, "name": name, **good})
+
+        rpc_error(sock, cmd, {"binary": binary, "name": name, "or_replace": True, **bad})
+
+        existing = rpc(sock, cmd, {"binary": binary, "name": name,
+                                   "if_not_exists": True, **good})["result"]
+        assert existing["already_existed"] is True
+        assert [f["name"] for f in existing[key]] == ["kept"]
+
+        replaced = rpc(sock, cmd, {"binary": binary, "name": name, "or_replace": True,
+                                   **{key: good[key]}, **({"size": 1} if cmd == "create_enum" else {})})["result"]
+        assert replaced["already_existed"] is False
+
+
 # ── 12. Function tags ─────────────────────────────────────────────────────────
 
 class TestTags:
@@ -1618,6 +1651,25 @@ class TestTags:
             f"Expected no functions with tag '{tag}' after untagging; "
             f"got: {result['functions']}"
         )
+
+
+    def test_tag_with_surrounding_whitespace_is_trimmed(self, daemon):
+        """The tag that is created is the one attached: no orphan 'x ' tag."""
+        tag = f"ws-tag-{uuid.uuid4().hex[:8]}"
+        base = {"binary": daemon["short_name"], "target": daemon["main_name"]}
+        try:
+            result = rpc(daemon["sock"], "tag_function", {**base, "tag": f"  {tag} "})["result"]
+            assert tag in result["all_tags"]
+            tags = {t["name"]: t["count"]
+                    for t in rpc(daemon["sock"], "list_tags",
+                                 {"binary": daemon["short_name"]})["result"]["tags"]}
+            assert tags.get(tag) == 1
+            assert not [n for n in tags if n != tag and n.strip() == tag], tags
+            found = rpc(daemon["sock"], "functions_by_tag", {
+                "binary": daemon["short_name"], "tag": f"{tag} "})["result"]
+            assert daemon["main_name"] in [f["name"] for f in found["functions"]]
+        finally:
+            rpc(daemon["sock"], "untag_function", {**base, "tag": tag})
 
 
 # ── Variable-discovery helper ───────────────────────────────────────────────

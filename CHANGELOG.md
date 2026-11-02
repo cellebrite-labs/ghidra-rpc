@@ -60,8 +60,22 @@
 ### Fixed
 
 - `set-equate` VALUE and `create-enum` VALUEs accept negative numbers (`-1`,
-  `-0x10`); Click rejected them as unknown options. A mistyped option on
-  these commands is still reported as `No such option`.
+  `-0x10`, `-0b1`); Click rejected them as unknown options. A mistyped option
+  on these commands is still reported as `No such option`.
+- `create-struct`/`create-union`/`create-enum --or-replace` remove the old
+  type in the same transaction that builds the new one, so a definition that
+  fails (e.g. an unknown field type) leaves the existing type intact instead
+  of deleting it.
+- Name lookups for `set-comment`, `xrefs-to`/`xrefs-from` and `list-vtable`
+  prefer an exact label over a function that merely contains the name
+  (`g_config` no longer resolves to `init_g_config`).
+- `start --detach` and `restart` report a daemon that exits during startup
+  (e.g. a bad `GHIDRA_INSTALL_DIR`) as JSON (`StartFailed`/`RestartFailed`,
+  with the log tail) instead of a Python traceback.
+- Auto-restart of a GUI-mode daemon waits 180 s like `start`/`restart` (was
+  60 s), and its error keeps the underlying cause.
+- `tag-function` trims the tag once: whitespace around `--tag` no longer
+  leaves an unused tag behind.
 - `retype-variable`/`rename-variable` verify with the `--timeout` decompile
   budget instead of a fixed 30 s, so a slow function no longer reports
   `verified: false` for an edit that applied.

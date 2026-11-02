@@ -95,6 +95,7 @@ def _handle_create_struct(ctx, args: dict) -> dict:
 
         dtm = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{struct_name}")
+        to_replace = None
 
         if existing is not None:
             if if_not_exists:
@@ -107,11 +108,9 @@ def _handle_create_struct(ctx, args: dict) -> dict:
                     "already_existed": True,
                 }
             elif or_replace:
-                # Remove the old definition; fresh one will be created below.
-                with ghidra_transaction(
-                    pi.program, f"ghidra-rpc: remove old struct {struct_name}"
-                ):
-                    dtm.remove(existing, TaskMonitor.DUMMY)
+                # Removed in the create transaction below, so a failed
+                # rebuild rolls the removal back instead of losing the type.
+                to_replace = existing
             else:
                 raise ValueError(
                     f"Data type '{struct_name}' already exists at "
@@ -240,6 +239,8 @@ def _handle_create_struct(ctx, args: dict) -> dict:
         with ghidra_transaction(
             pi.program, f"ghidra-rpc: create struct {struct_name}"
         ):
+            if to_replace is not None:
+                dtm.remove(to_replace, TaskMonitor.DUMMY)
             added = (_apply_explicit(*explicit_layout) if explicit
                      else _build_struct())
 
@@ -542,6 +543,7 @@ def _handle_create_enum(ctx, args: dict) -> dict:
 
         dtm      = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{enum_name}")
+        to_replace = None
 
         if existing is not None:
             if if_not_exists:
@@ -553,11 +555,9 @@ def _handle_create_enum(ctx, args: dict) -> dict:
                     "already_existed": True,
                 }
             elif or_replace:
-                with ghidra_transaction(
-                    pi.program,
-                    f"ghidra-rpc: remove old enum {enum_name}",
-                ):
-                    dtm.remove(existing, TaskMonitor.DUMMY)
+                # Removed in the create transaction below, after the values
+                # are validated, so a bad value can't lose the old enum.
+                to_replace = existing
             else:
                 raise ValueError(
                     f"Data type '{enum_name}' already exists at "
@@ -577,6 +577,8 @@ def _handle_create_enum(ctx, args: dict) -> dict:
         with ghidra_transaction(
             pi.program, f"ghidra-rpc: create enum {enum_name}"
         ):
+            if to_replace is not None:
+                dtm.remove(to_replace, TaskMonitor.DUMMY)
             added = dtm.addDataType(enum_dt, DataTypeConflictHandler.DEFAULT_HANDLER)
 
         return {
@@ -976,6 +978,7 @@ def _handle_create_union(ctx, args: dict) -> dict:
 
         dtm = pi.program.getDataTypeManager()
         existing = dtm.getDataType(f"/{union_name}")
+        to_replace = None
 
         if existing is not None:
             if if_not_exists:
@@ -987,10 +990,9 @@ def _handle_create_union(ctx, args: dict) -> dict:
                     "already_existed": True,
                 }
             elif or_replace:
-                with ghidra_transaction(
-                    pi.program, f"ghidra-rpc: remove old union {union_name}"
-                ):
-                    dtm.remove(existing, TaskMonitor.DUMMY)
+                # Removed in the create transaction below, so a failed
+                # rebuild rolls the removal back instead of losing the type.
+                to_replace = existing
             else:
                 raise ValueError(
                     f"Data type '{union_name}' already exists at "
@@ -1025,6 +1027,8 @@ def _handle_create_union(ctx, args: dict) -> dict:
         with ghidra_transaction(
             pi.program, f"ghidra-rpc: create union {union_name}"
         ):
+            if to_replace is not None:
+                dtm.remove(to_replace, TaskMonitor.DUMMY)
             added = _build_union()
 
         return {

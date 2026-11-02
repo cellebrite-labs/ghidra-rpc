@@ -272,7 +272,7 @@ and track analysis progress.
 
 | Command | Description | Output shape |
 |---------|-------------|--------------|
-| `ghidra-rpc create-struct <binary> <name> TYPE FIELD [TYPE FIELD ...] [--if-not-exists\|--or-replace]` | Create a named struct; `--if-not-exists` is idempotent, `--or-replace` rebuilds it | `{name, path, size, fields:[...], already_existed}` |
+| `ghidra-rpc create-struct <binary> <name> TYPE FIELD [TYPE FIELD ...] [--if-not-exists\|--or-replace]` | Create a named struct; `--if-not-exists` is idempotent, `--or-replace` rebuilds it (if the new definition fails, the old one is kept) | `{name, path, size, fields:[...], already_existed}` |
 | `ghidra-rpc create-struct <binary> <name> --field OFFSET TYPE NAME [--field ...]` | Create a struct laying fields at explicit byte offsets (OFFSET is decimal or 0x hex); gaps between fields are auto-padded with undefined bytes (no manual pad fields). Overlaps are rejected. | `{name, path, size, fields:[...], already_existed}` |
 | `ghidra-rpc create-union <binary> <name> TYPE FIELD [TYPE FIELD ...] [--if-not-exists\|--or-replace]` | Create a named union; all fields share offset 0 | `{name, path, size, fields:[...], already_existed}` |
 | `ghidra-rpc modify-struct <binary> <struct_name> --field-offset N\|--field-name NAME [--new-type TYPE] [--new-name NAME] [--new-comment TEXT]` | Retype, rename, or re-comment a struct field (`--field-offset` is decimal) | `{name, path, size, fields:[...], modified_field:{...}}` |

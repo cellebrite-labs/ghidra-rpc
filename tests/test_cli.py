@@ -303,6 +303,12 @@ class TestNegativeValues:
             {"name": "OK", "value": 0}]
         assert captured["args"]["size"] == 4
 
+    def test_every_number_form_hexint_accepts_can_be_negative(self, monkeypatch, capsys):
+        code, captured, _ = self._invoke(monkeypatch, capsys, [
+            "create-enum", "bin", "Flags", "A", "-0b1", "B", "-0o7", "C", "-1_000"])
+        assert code == 0
+        assert [v["value"] for v in captured["args"]["values"]] == [-1, -7, -1000]
+
     @pytest.mark.parametrize("argv", [
         ["set-equate", "bin", "0x10", "--typo", "5"],
         ["create-enum", "bin", "Status", "FAIL", "-1", "--siz", "4"],
@@ -314,3 +320,28 @@ class TestNegativeValues:
         assert captured == {}
         data = json.loads(out)
         assert data["ok"] is False and "No such option" in data["message"]
+
+
+class TestStartFailureIsJson:
+    """A daemon that exits during startup (e.g. bad GHIDRA_INSTALL_DIR) makes
+    start_background raise RuntimeError; start/restart report it as JSON."""
+
+    @pytest.mark.parametrize("argv, error", [
+        (["start", "--headless", "--detach"], "StartFailed"),
+        (["restart", "--headless"], "RestartFailed"),
+    ])
+    def test_early_exit_reported_as_json(self, monkeypatch, capsys, tmp_path, argv, error):
+        from ghidra_rpc import daemon
+        monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path / "state"))
+
+        def fake_start(session, timeout=None):
+            raise RuntimeError("Daemon process exited immediately with code 1.")
+
+        monkeypatch.setattr(daemon, "start_background", fake_start)
+        monkeypatch.setattr(daemon, "stop_daemon", lambda sock: False)
+        code = _run_main(monkeypatch, argv + ["--project", str(tmp_path / "p.gpr")])
+
+        assert code == 1
+        data = json.loads(capsys.readouterr().out)
+        assert data == {"ok": False, "error": error,
+                        "message": "Daemon process exited immediately with code 1."}
