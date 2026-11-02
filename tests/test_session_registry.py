@@ -346,6 +346,9 @@ class TestListInstancesCLI:
         # `stop --all` walks the same discovery path as _discover_instances;
         # without this a real daemon on the host could get stopped for real.
         monkeypatch.setattr("ghidra_rpc.cli._SOCKET_SCAN_DIR", short_tmp_path)
+        # The mock daemon is a thread in this process, so the pid `ping`
+        # reports (ours) never exits; `stop` would wait out STOP_TIMEOUT.
+        monkeypatch.setattr("ghidra_rpc.daemon._pid_alive", lambda pid: False)
 
     def test_empty_result(self):
         from click.testing import CliRunner

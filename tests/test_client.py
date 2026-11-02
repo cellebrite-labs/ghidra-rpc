@@ -228,3 +228,44 @@ class TestAutoRestart:
         # The real cause is kept, and the advice doesn't push a second start.
         assert "still booting" in str(exc_info.value)
         assert "status" in str(exc_info.value)
+
+
+class TestStopWait:
+    """daemon.stop_daemon/wait_stopped: wait for the endpoint *and* the process."""
+
+    def test_pid_alive_for_this_process(self):
+        import os
+        from ghidra_rpc.daemon import _pid_alive
+        assert _pid_alive(os.getpid())
+
+    def test_pid_alive_false_for_an_exited_child(self):
+        # Our own exited child is a zombie until reaped; _pid_alive reaps it.
+        import subprocess
+        import sys
+        from ghidra_rpc.daemon import _pid_alive
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        deadline = time.time() + 10
+        while _pid_alive(proc.pid) and time.time() < deadline:
+            time.sleep(0.05)
+        assert not _pid_alive(proc.pid)
+
+    def test_wait_stopped_waits_for_the_process(self, tmp_path, monkeypatch):
+        from ghidra_rpc import daemon
+        alive = {"n": 3}
+
+        def fake_alive(pid):
+            alive["n"] -= 1
+            return alive["n"] > 0
+
+        monkeypatch.setattr(daemon, "_pid_alive", fake_alive)
+        monkeypatch.setattr(daemon.time, "sleep", lambda s: None)
+        daemon.wait_stopped(tmp_path / "gone.sock", 1234, timeout=60)
+        assert alive["n"] == 0   # polled until the process was gone
+
+    def test_wait_stopped_times_out_while_endpoint_remains(self, tmp_path, monkeypatch):
+        from ghidra_rpc import daemon
+        sock = tmp_path / "still.sock"
+        sock.touch()
+        monkeypatch.setattr(daemon, "_pid_alive", lambda pid: False)
+        with pytest.raises(TimeoutError, match="did not shut down"):
+            daemon.wait_stopped(sock, 0, timeout=0.3)

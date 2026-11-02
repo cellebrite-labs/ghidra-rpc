@@ -113,15 +113,21 @@ def _find_function(pi, name_or_address: str):
             return func
         raise ValueError(f"No function at or containing address {name_or_address}")
 
+    return _pick_function(name_or_address, *_function_candidates(pi, name_or_address))
+
+
+def _function_candidates(pi, name: str) -> tuple[list, list]:
+    """One pass over the functions: those named exactly *name*, and those whose
+    name contains it (case-insensitive).  Bare hex never partial-matches an
+    auto-generated (DEFAULT-source) name."""
     from ghidra.program.model.symbol import SourceType
 
-    # Try as exact name
-    name_lower = name_or_address.lower()
+    name_lower = name.lower()
     bare_hex = bool(re.fullmatch(r"[0-9a-f]+", name_lower))
     exact_matches = []
     partial_matches = []
 
-    for func in fm.getFunctions(True):
+    for func in pi.program.getFunctionManager().getFunctions(True):
         func_name = str(func.getName())
         if func_name.lower() == name_lower:
             exact_matches.append(func)
@@ -129,13 +135,18 @@ def _find_function(pi, name_or_address: str):
             if bare_hex and func.getSymbol().getSource() == SourceType.DEFAULT:
                 continue
             partial_matches.append(func)
+    return exact_matches, partial_matches
 
+
+def _pick_function(name: str, exact_matches: list, partial_matches: list):
+    """The single exact match, else the single partial match; raises
+    ValueError (listing candidates) when ambiguous or nothing matches."""
     if len(exact_matches) == 1:
         return exact_matches[0]
     elif len(exact_matches) > 1:
         suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in exact_matches]
         raise ValueError(
-            f"Ambiguous function name '{name_or_address}'. Matches: {suggestions}"
+            f"Ambiguous function name '{name}'. Matches: {suggestions}"
         )
 
     if len(partial_matches) == 1:
@@ -143,10 +154,10 @@ def _find_function(pi, name_or_address: str):
     elif len(partial_matches) > 1:
         suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in partial_matches[:10]]
         raise ValueError(
-            f"Ambiguous function name '{name_or_address}'. Partial matches: {suggestions}"
+            f"Ambiguous function name '{name}'. Partial matches: {suggestions}"
         )
 
-    raise ValueError(f"Function '{name_or_address}' not found. If '{name_or_address}' is an address, pass it with a 0x prefix.")
+    raise ValueError(f"Function '{name}' not found. If '{name}' is an address, pass it with a 0x prefix.")
 
 
 def _resolve_address(pi, target: str):
@@ -165,17 +176,14 @@ def _resolve_address(pi, target: str):
 
     # An exact function name wins; a partial (substring) match only after
     # labels, so "g_config" finds the label, not a function "init_g_config".
-    try:
-        func, function_error = _find_function(pi, target), None
-    except ValueError as e:
-        func, function_error = None, e
-        # Several functions with exactly this name are ambiguous, unless they
-        # are one import's thunk chain (an ELF PLT thunk and the intermediate
-        # thunk both named "printf"), which the symbol scan below handles.
-        if not _one_function_family(_exact_functions(pi, target)):
-            raise
-    if func is not None and str(func.getName()).lower() == target.lower():
-        return func.getEntryPoint()
+    exact, partial = _function_candidates(pi, target)
+    if len(exact) == 1:
+        return exact[0].getEntryPoint()
+    # Several functions with exactly this name are ambiguous, unless they are
+    # one import's thunk chain (an ELF PLT thunk and the intermediate thunk
+    # both named "printf"), which the symbol scan below handles.
+    if len(exact) > 1 and not _one_function_family(exact):
+        _pick_function(target, exact, partial)   # raises the ambiguity error
 
     # Try as symbol — prefer non-external (e.g. PLT thunk) over EXTERNAL space symbols.
     # In ELF binaries an imported function like 'malloc' has both a PLT thunk at a real
@@ -193,17 +201,7 @@ def _resolve_address(pi, target: str):
 
     if external_fallback is not None:
         return external_fallback
-    if func is not None:
-        return func.getEntryPoint()
-
-    raise function_error
-
-
-def _exact_functions(pi, name: str) -> list:
-    """Every function whose name equals *name* (case-insensitive)."""
-    name_lower = name.lower()
-    return [f for f in pi.program.getFunctionManager().getFunctions(True)
-            if str(f.getName()).lower() == name_lower]
+    return _pick_function(target, exact, partial).getEntryPoint()
 
 
 def _one_function_family(funcs) -> bool:

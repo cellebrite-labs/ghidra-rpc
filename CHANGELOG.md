@@ -76,7 +76,9 @@
   ambiguous name when several distinct functions share it exactly (an
   import's PLT and intermediate thunks still count as one).
 - `stop`, `stop --all` and `restart` wait until the daemon has actually shut
-  down (endpoint gone, project saved and released). `restart` used to take
+  down: its endpoint is gone and its process has exited (in GUI mode Ghidra
+  closes the project only after the endpoint is removed). `stop --all` asks
+  every daemon first, so their shutdowns overlap. `restart` used to take
   the dying daemon's reply for the new one's and report success at once, so a
   quick second restart or command could start another daemon on the same
   project (`LockException: Unable to lock project!`). New errors:

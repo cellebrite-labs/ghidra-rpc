@@ -349,3 +349,26 @@ class TestStartFailureIsJson:
         data = json.loads(capsys.readouterr().out)
         assert data == {"ok": False, "error": error,
                         "message": "Daemon process exited immediately with code 1."}
+
+
+class TestStopAllOverlaps:
+    """stop --all asks every daemon to stop before waiting on any of them."""
+
+    def test_all_stops_requested_before_waiting(self, monkeypatch, capsys):
+        import ghidra_rpc.cli as cli_mod
+        from ghidra_rpc import daemon
+        events = []
+        monkeypatch.setattr(cli_mod, "_discover_instances", lambda include_dead=False: [
+            {"socket": "/tmp/a.sock", "project": "/p/a.gpr"},
+            {"socket": "/tmp/b.sock", "project": "/p/b.gpr"},
+        ])
+        monkeypatch.setattr(daemon, "request_stop",
+                            lambda sock: events.append(("stop", str(sock))) or 42)
+        monkeypatch.setattr(daemon, "wait_stopped",
+                            lambda sock, pid, timeout: events.append(("wait", str(sock))))
+
+        code = _run_main(monkeypatch, ["stop", "--all"])
+
+        assert code == 0
+        assert [e[0] for e in events] == ["stop", "stop", "wait", "wait"]
+        assert json.loads(capsys.readouterr().out)["result"]["count"] == 2

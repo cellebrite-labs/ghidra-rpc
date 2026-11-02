@@ -41,9 +41,11 @@ ghidra-rpc/
 │   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background,
 │   │                       stop_daemon, is_running, default_start_timeout —
 │   │                       180 s GUI / 60 s headless, shared by start, restart
-│   │                       and auto-restart). stop_daemon(wait=STOP_TIMEOUT)
-│   │                       blocks until the endpoint and session file are gone:
-│   │                       the dying daemon still answers pings until then
+│   │                       and auto-restart). stop_daemon(wait=STOP_TIMEOUT) =
+│   │                       request_stop (pings for the pid, sends stop) +
+│   │                       wait_stopped (endpoint gone AND pid exited): the
+│   │                       dying daemon answers pings until its endpoint goes,
+│   │                       and a GUI one holds the project lock until it exits
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
 │   │                       from session or current env to the child process.
 │   ├── session.py        — Session persistence

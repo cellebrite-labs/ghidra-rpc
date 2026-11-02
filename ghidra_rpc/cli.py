@@ -9,6 +9,7 @@ import functools
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -282,8 +283,7 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
     # Wait for the old daemon to finish: until then it still answers pings
     # and holds the project lock.
     try:
-        stop_daemon(sock, wait=STOP_TIMEOUT,
-                    session_file=session_mod.session_file_path(gpr))
+        stop_daemon(sock, wait=STOP_TIMEOUT)
     except TimeoutError as e:
         _json_error("RestartTimeout", str(e))
 
@@ -369,13 +369,7 @@ def status(project: str | None):
               help="Stop all running instances (mutually exclusive with --project).")
 def stop(project: str | None, stop_all: bool):
     """Stop the daemon and wait until it has shut down."""
-    from ghidra_rpc.daemon import STOP_TIMEOUT, stop_daemon
-
-    def stop_and_wait(sock: Path, gpr: Path | None) -> bool:
-        return stop_daemon(
-            sock, wait=STOP_TIMEOUT,
-            session_file=session_mod.session_file_path(gpr) if gpr else None,
-        )
+    from ghidra_rpc.daemon import STOP_TIMEOUT, request_stop, stop_daemon, wait_stopped
 
     if stop_all and project:
         _json_error("InvalidArgs", "--all and --project are mutually exclusive.")
@@ -387,13 +381,18 @@ def stop(project: str | None, stop_all: bool):
             return
         stopped: list[str] = []
         failed: list[str] = []
-        for inst in instances:
+        # Ask them all first, so their shutdowns (saving programs) overlap.
+        pending = [(inst, request_stop(Path(inst["socket"]))) for inst in instances]
+        deadline = time.time() + STOP_TIMEOUT
+        for inst, pid in pending:
             label = inst.get("project") or inst["socket"]
-            gpr = Path(inst["project"]) if inst.get("project") else None
-            try:
-                ok = stop_and_wait(Path(inst["socket"]), gpr)
-            except TimeoutError:
-                ok = False
+            ok = pid is not None
+            if ok:
+                try:
+                    wait_stopped(Path(inst["socket"]), pid,
+                                 max(deadline - time.time(), 0.0))
+                except TimeoutError:
+                    ok = False
             (stopped if ok else failed).append(label)
         _json_output({"ok": True, "result": {
             "stopped": stopped, "failed": failed, "count": len(stopped),
@@ -404,7 +403,7 @@ def stop(project: str | None, stop_all: bool):
     sock = session_mod.socket_path_for_project(gpr)
 
     try:
-        running = stop_and_wait(sock, gpr)
+        running = stop_daemon(sock, wait=STOP_TIMEOUT)
     except TimeoutError as e:
         _json_error("StopTimeout", str(e))
     if running:

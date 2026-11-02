@@ -182,36 +182,84 @@ def start_background(session: Session, timeout: float | None = None) -> None:
 STOP_TIMEOUT: float = 120.0
 
 
-def stop_daemon(socket_path: Path, *, wait: float = 0.0,
-                session_file: Path | None = None) -> bool:
-    """Ask a running daemon to stop. Returns False if none was running.
+def _pid_alive(pid: int) -> bool:
+    """True if process *pid* is still running (on this machine)."""
+    if sys.platform == "win32":
+        import ctypes
 
-    The daemon acknowledges *before* it shuts down. With ``wait`` > 0, block
-    until the shutdown is done: the endpoint is gone (until then the dying
-    daemon can still answer a ping, so a new start would mistake it for
-    itself) and, if *session_file* existed, it has been removed, which the
-    daemon does last, after saving and closing the project.  Raises
-    TimeoutError if that takes longer than ``wait`` seconds.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        synchronize, wait_timeout, error_access_denied = 0x00100000, 0x102, 5
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == error_access_denied
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.waitpid(pid, os.WNOHANG)  # reap it if it is our own exited child
+    except ChildProcessError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def request_stop(socket_path: Path) -> int | None:
+    """Ask a running daemon to stop without waiting for it.
+
+    Returns None if no daemon was running, else its pid (0 if unknown), for
+    ``wait_stopped``.  The daemon acknowledges *before* it shuts down.
     """
     from ghidra_rpc.client import send_request, DaemonNotRunning
 
-    watch_session = session_file is not None and session_file.exists()
+    try:
+        pid = int(send_request(socket_path, "ping", socket_timeout=5.0)
+                  ["result"].get("pid") or 0)
+    except DaemonNotRunning:
+        return None
+    except Exception:
+        pid = 0
     try:
         send_request(socket_path, "stop")
     except DaemonNotRunning:
-        return False
+        return None
     except Exception:
         pass  # the daemon may close the connection before responding
+    return pid
 
-    deadline = time.time() + wait
-    while wait > 0 and (socket_path.exists()
-                        or (watch_session and session_file.exists())):
+
+def wait_stopped(socket_path: Path, pid: int, timeout: float) -> None:
+    """Block until a daemon told to stop has shut down: its endpoint is gone
+    (until then the dying daemon still answers pings, so a new start would
+    mistake it for itself) and its process has exited (in GUI mode Ghidra
+    closes the project, releasing its lock, only after the endpoint is gone).
+    Raises TimeoutError after *timeout* seconds."""
+    deadline = time.time() + timeout
+    while socket_path.exists() or (pid and _pid_alive(pid)):
         if time.time() >= deadline:
             raise TimeoutError(
                 f"Daemon at {socket_path} acknowledged stop but did not shut "
-                f"down within {wait:.0f}s."
+                f"down within {timeout:.0f}s."
             )
         time.sleep(0.2)
+
+
+def stop_daemon(socket_path: Path, *, wait: float = 0.0) -> bool:
+    """Ask a running daemon to stop. Returns False if none was running.
+
+    With ``wait`` > 0, also block until it has shut down (``wait_stopped``);
+    raises TimeoutError if that takes longer than ``wait`` seconds.
+    """
+    pid = request_stop(socket_path)
+    if pid is None:
+        return False
+    if wait > 0:
+        wait_stopped(socket_path, pid, wait)
     return True
 
 

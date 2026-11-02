@@ -246,3 +246,11 @@ class TestResolveAddress:
         pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
             _symbol("printf", plt_addr)]
         assert _resolve(pi, "printf") is plt_addr
+
+    def test_label_lookup_scans_functions_once(self):
+        label_addr = MagicMock()
+        pi = _pi([_func("main")])   # no function matches, even partially
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("g_config", label_addr)]
+        assert _resolve(pi, "g_config") is label_addr
+        assert pi.program.getFunctionManager.return_value.getFunctions.call_count == 1
