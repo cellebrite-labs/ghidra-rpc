@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
-from ghidra_rpc.server.tools.modifications import (
+from ghidra_rpc.server.tools._common import (
+    _commit,
+    _find_function,
     _maybe_swing,
     ghidra_transaction,
 )
@@ -73,9 +74,7 @@ def _handle_tag_function(ctx, args: dict) -> dict:
             "all_tags": sorted(all_tags),
         }
 
-    result = _maybe_swing(ctx, do_tag)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_tag, invalidate=False)
 
 
 def _handle_untag_function(ctx, args: dict) -> dict:

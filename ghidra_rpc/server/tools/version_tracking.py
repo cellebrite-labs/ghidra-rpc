@@ -7,6 +7,7 @@ import time
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
+from ghidra_rpc.server.tools._common import _decompile
 
 logger = logging.getLogger("ghidra-rpc.vt")
 
@@ -439,7 +440,7 @@ def _handle_match_function(ctx, args: dict) -> dict:
         )
 
     # Resolve the source function using the daemon's reference (for name lookup)
-    from ghidra_rpc.server.tools.decompiler import _find_function
+    from ghidra_rpc.server.tools._common import _find_function
     pi_src_daemon = ctx.get_program(source_binary)
     src_func = _find_function(pi_src_daemon, func_name)
     src_func_name = str(src_func.getName())
@@ -564,8 +565,6 @@ def _handle_decompile_all(ctx, args: dict) -> dict:
     Returns a list of {name, address, signature, c_code} dicts, one per
     function.  Skips external and thunk functions.
     """
-    from ghidra.util.task import TaskMonitor
-
     binary = args.get("binary", "")
     timeout = int(args.get("timeout", 60))
     limit = args.get("limit")
@@ -598,8 +597,7 @@ def _handle_decompile_all(ctx, args: dict) -> dict:
 
     for func in funcs_to_decompile:
         try:
-            with pi.decompiler_pool.acquire() as decompiler:
-                result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+            result = _decompile(pi, func, timeout)
 
             error_msg = result.getErrorMessage()
             if error_msg and error_msg.strip():
@@ -675,7 +673,7 @@ def _handle_function_diff(ctx, args: dict) -> dict:
             "Missing required arguments: binary1, func1, binary2, func2"
         )
 
-    from ghidra_rpc.server.tools.decompiler import _find_function
+    from ghidra_rpc.server.tools._common import _find_function
 
     pi1 = ctx.get_program(binary1)
     pi2 = ctx.get_program(binary2)
@@ -723,11 +721,8 @@ def _handle_function_diff(ctx, args: dict) -> dict:
 
 def _diff_decompile(pi1, f1, pi2, f2, timeout: int):
     """Decompile both functions and return (code1, code2)."""
-    from ghidra.util.task import TaskMonitor
-
-    def _decompile(pi, func):
-        with pi.decompiler_pool.acquire() as decomp:
-            result = decomp.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+    def _decompile_c(pi, func):
+        result = _decompile(pi, func, timeout)
         error_msg = result.getErrorMessage()
         if error_msg and error_msg.strip():
             raise RuntimeError(
@@ -736,7 +731,7 @@ def _diff_decompile(pi1, f1, pi2, f2, timeout: int):
         df = result.getDecompiledFunction()
         return str(df.getC()) if df else ""
 
-    return _decompile(pi1, f1), _decompile(pi2, f2)
+    return _decompile_c(pi1, f1), _decompile_c(pi2, f2)
 
 
 def _disassemble_function(pi, func) -> str:

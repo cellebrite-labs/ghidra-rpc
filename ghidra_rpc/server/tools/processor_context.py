@@ -141,7 +141,7 @@ def _handle_set_processor_context(ctx, args: dict) -> dict:
 
     def do_set():
         from ghidra_rpc.server.context import _parse_address
-        from ghidra_rpc.server.tools.modifications import ghidra_transaction
+        from ghidra_rpc.server.tools._common import ghidra_transaction
 
         addr     = _parse_address(pi.program, address_str)
         end_addr = _parse_address(pi.program, end_str) if end_str else addr
@@ -195,10 +195,8 @@ def _handle_set_processor_context(ctx, args: dict) -> dict:
             "verified": actual == int_value,
         }
 
-    from ghidra_rpc.server.tools.modifications import _maybe_swing
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    from ghidra_rpc.server.tools._common import _commit
+    return _commit(ctx, pi, do_set)
 
 
 register_handler("get_processor_context", _handle_get_processor_context)

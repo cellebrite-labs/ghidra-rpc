@@ -6,148 +6,20 @@ Ghidra API calls go through Swing.runNow() for thread safety.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
-
-
-@contextmanager
-def ghidra_transaction(program, description: str):
-    """Context manager for Ghidra transactions. Ensures proper commit/rollback.
-
-    A short sleep after ``endTransaction`` prevents the intermittent
-    ``IllegalStateException: No transaction is open`` that occurs when
-    consecutive write commands are issued rapidly.  Ghidra's transaction
-    machinery posts commit notifications asynchronously; without the sleep the
-    next ``startTransaction`` can race with those notifications.
-    """
-    import time as _time
-    tx_id = program.startTransaction(description)
-    committed = False
-    try:
-        yield
-        committed = True
-    finally:
-        program.endTransaction(tx_id, committed)
-        # Brief yield so Ghidra can finish posting commit events before the
-        # next transaction opens.  Eliminates the ~20% failure rate seen when
-        # back-to-back write commands arrive without any inter-command delay.
-        _time.sleep(0.05)
-
-
-def _maybe_swing(ctx, fn):
-    """Run fn on Swing EDT if the context is GUI mode, else run directly."""
-    if hasattr(ctx, "run_on_swing"):
-        return ctx.run_on_swing(fn)
-    return fn()
-
-
-# ── Data-type resolution ──────────────────────────────────────────────────────
-
-def _resolve_data_type(program, type_str: str):
-    """Resolve a type-name string to a Ghidra DataType.
-
-    Supports (all work in headless and GUI mode):
-    - Built-in aliases: ``byte``, ``char``, ``int``, ``uint``, ``string``, …
-    - Pointer decoration: ``char *``, ``void *``, ``int **``, …
-    - Array decoration:  ``char[11]``, ``int[4]``, …
-    - DTM lookup by name or full path: any type already in the program's
-      data type manager (structs, enums, typedefs, …)
-
-    Note: Ghidra's DataTypeParser requires a GUI DataTypeQueryService so it
-    cannot be used in headless mode. This function implements the common cases
-    directly via the Ghidra data-model API.
-    """
-    import re as _re
-    t = type_str.strip()
-
-    # ---- pointer: strip trailing '*', resolve base recursively ---------------
-    if t.endswith("*"):
-        base_dt = _resolve_data_type(program, t[:-1].strip())
-        from ghidra.program.model.data import PointerDataType
-        return PointerDataType(base_dt, program.getDataTypeManager())
-
-    # ---- array: e.g. "char[11]" or "int [4]" ---------------------------------
-    m = _re.fullmatch(r"(.+?)\s*\[(\d+)\]", t)
-    if m:
-        base_dt = _resolve_data_type(program, m.group(1).strip())
-        count = int(m.group(2))
-        from ghidra.program.model.data import ArrayDataType
-        return ArrayDataType(base_dt, count)
-
-    # ---- string / unicode aliases (variable-length, scanned to null) ---------
-    if t.lower() in ("string", "cstring", "c_string", "terminated_string"):
-        for cls_name in ("TerminatedCStringDataType", "StringDataType"):
-            try:
-                mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-                cls = getattr(mod, cls_name)
-                return getattr(cls, "dataType", cls())
-            except Exception:
-                pass
-
-    if t.lower() in ("unicode", "wstring", "terminated_unicode"):
-        for cls_name in ("TerminatedUnicode32DataType", "TerminatedUnicodeDataType"):
-            try:
-                mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-                cls = getattr(mod, cls_name)
-                return getattr(cls, "dataType", cls())
-            except Exception:
-                pass
-
-    # ---- simple fixed-length built-ins ----------------------------------------
-    _BUILTINS = {
-        "byte":    "ByteDataType",
-        "char":    "CharDataType",
-        "word":    "WordDataType",
-        "dword":   "DWordDataType",
-        "qword":   "QWordDataType",
-        "int":     "IntegerDataType",
-        "uint":    "UnsignedIntegerDataType",
-        "short":   "ShortDataType",
-        "ushort":  "UnsignedShortDataType",
-        "long":    "LongDataType",
-        "ulong":   "UnsignedLongDataType",
-        "float":   "FloatDataType",
-        "double":  "DoubleDataType",
-        "void":    "VoidDataType",
-        "bool":    "BooleanDataType",
-        "boolean": "BooleanDataType",
-        "pointer": "PointerDataType",
-    }
-    cls_name = _BUILTINS.get(t.lower())
-    if cls_name:
-        try:
-            mod = __import__("ghidra.program.model.data", fromlist=[cls_name])
-            cls = getattr(mod, cls_name)
-            return getattr(cls, "dataType", cls())
-        except Exception:
-            pass
-
-    # ---- program data-type manager lookup (structs, enums, typedefs, …) ------
-    dtm = program.getDataTypeManager()
-    # Exact path match first (e.g. "/MyStruct" or "/POSIX/size_t")
-    dt = dtm.getDataType(t if t.startswith("/") else f"/{t}")
-    if dt is not None:
-        return dt
-    # Substring / name search across all categories
-    from java.util import ArrayList  # type: ignore
-    hits = ArrayList()
-    dtm.findDataTypes(t, hits)
-    if hits.size() == 1:
-        return hits.get(0)
-    if hits.size() > 1:
-        paths = [str(hits.get(i).getPathName()) for i in range(hits.size())]
-        raise ValueError(
-            f"Ambiguous type '{t}'. Matches: {paths}. "
-            f"Use the full path (e.g. '/SomeDir/{t}') to disambiguate."
-        )
-
-    raise ValueError(
-        f"Unknown data type '{type_str}'. Use a built-in name (byte, char, int, string, "
-        f"char *, char[11], …) or a type defined in the program's data type manager."
-    )
+# These helpers used to live here; the import also re-exports them.
+from ghidra_rpc.server.tools._common import (
+    _comment_types,
+    _commit,
+    _decompile,
+    _decompile_high,
+    _find_function,
+    _maybe_swing,
+    _resolve_data_type,
+    _resolve_namespace,
+    ghidra_transaction,
+)
 
 
 def _handle_create_label(ctx, args: dict) -> dict:
@@ -222,9 +94,7 @@ def _handle_create_label(ctx, args: dict) -> dict:
             "verified": actual == name,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create)
 
 
 def _handle_rename_function(ctx, args: dict) -> dict:
@@ -255,7 +125,6 @@ def _handle_rename_function(ctx, args: dict) -> dict:
                 ns = _resolve_namespace(pi.program, namespace)
                 func.setParentNamespace(ns)
 
-        pi.decompiler_pool.invalidate_all()
         # Read back to verify
         actual = str(func.getName())
         actual_ns = str(func.getParentNamespace().getName(True))
@@ -270,9 +139,7 @@ def _handle_rename_function(ctx, args: dict) -> dict:
             result["new_namespace"] = actual_ns
         return result
 
-    result = _maybe_swing(ctx, do_rename)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_rename)
 
 
 def _handle_rename_symbol(ctx, args: dict) -> dict:
@@ -334,9 +201,7 @@ def _handle_rename_symbol(ctx, args: dict) -> dict:
             "verified": actual == new_name,
         }
 
-    result = _maybe_swing(ctx, do_rename)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_rename)
 
 
 def _resolve_comment_address(pi, target: str):
@@ -366,25 +231,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
 
     def do_set_comment():
-        # Map comment type names to Ghidra constants
-        try:
-            from ghidra.program.model.listing import CommentType
-            type_map = {
-                "plate": CommentType.PLATE,
-                "pre": CommentType.PRE,
-                "post": CommentType.POST,
-                "eol": CommentType.EOL,
-                "repeatable": CommentType.REPEATABLE,
-            }
-        except ImportError:
-            from ghidra.program.model.listing import CodeUnit
-            type_map = {
-                "plate": CodeUnit.PLATE_COMMENT,
-                "pre": CodeUnit.PRE_COMMENT,
-                "post": CodeUnit.POST_COMMENT,
-                "eol": CodeUnit.EOL_COMMENT,
-                "repeatable": CodeUnit.REPEATABLE_COMMENT,
-            }
+        type_map = _comment_types()
 
         ct = comment_type.lower()
         ghidra_ct = type_map.get(ct)
@@ -399,7 +246,6 @@ def _handle_set_comment(ctx, args: dict) -> dict:
         with ghidra_transaction(pi.program, f"ghidra-rpc: set {ct} comment @ {addr}"):
             pi.program.getListing().setComment(addr, ghidra_ct, comment)
 
-        pi.decompiler_pool.invalidate_all()
         # Read back the comment to verify
         actual = pi.program.getListing().getComment(ghidra_ct, addr)
         return {
@@ -409,9 +255,7 @@ def _handle_set_comment(ctx, args: dict) -> dict:
             "verified": str(actual) == comment if actual else comment == "",
         }
 
-    result = _maybe_swing(ctx, do_set_comment)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set_comment)
 
 
 # Calling conventions that may appear inline in a C-style signature string.
@@ -511,7 +355,6 @@ def _handle_set_function_signature(ctx, args: dict) -> dict:
                 # Non-fatal: the signature itself was applied successfully.
                 cc_applied = None
 
-        pi.decompiler_pool.invalidate_all()
         # Read back the committed signature to verify it applied correctly.
         new_sig = str(func.getSignature())
         result = {
@@ -526,9 +369,7 @@ def _handle_set_function_signature(ctx, args: dict) -> dict:
             result["calling_convention"] = cc_applied
         return result
 
-    result = _maybe_swing(ctx, do_set_sig)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set_sig)
 
 
 def _handle_set_data_type(ctx, args: dict) -> dict:
@@ -568,8 +409,6 @@ def _handle_set_data_type(ctx, args: dict) -> dict:
                     listing.clearCodeUnits(cu.getMinAddress(), cu.getMaxAddress(), False)
                 data = listing.createData(addr, dt)
 
-        pi.decompiler_pool.invalidate_all()
-
         length = data.getLength() if data else None
         try:
             value = str(data.getValue()) if data else None
@@ -583,9 +422,22 @@ def _handle_set_data_type(ctx, args: dict) -> dict:
             "value":     value,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set)
+
+
+def _find_local_symbol(high_func, func, variable_name: str):
+    """Return the first ``HighSymbol`` named *variable_name* in *high_func*'s
+    local symbol map, or raise ValueError listing the available names."""
+    all_names = []
+    for sym in high_func.getLocalSymbolMap().getSymbols():
+        sym_name = str(sym.getName())
+        all_names.append(sym_name)
+        if sym_name == variable_name:
+            return sym
+    raise ValueError(
+        f"Variable '{variable_name}' not found in '{func.getName()}'. "
+        f"Available: {sorted(all_names)}"
+    )
 
 
 def _handle_retype_variable(ctx, args: dict) -> dict:
@@ -612,34 +464,9 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     new_type = _resolve_data_type(pi.program, type_str)
 
     # ---- Step 1: decompile to get HighFunction (blocking; not on Swing EDT) --
-    from ghidra.util.task import TaskMonitor
+    high_func = _decompile_high(pi, func, timeout)
 
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
-
-    # Find the symbol by name in the local symbol map
-    found_sym = None
-    all_names = []
-    for sym in high_func.getLocalSymbolMap().getSymbols():
-        sym_name = str(sym.getName())
-        all_names.append(sym_name)
-        if sym_name == variable_name:
-            found_sym = sym
-            break
-
-    if found_sym is None:
-        raise ValueError(
-            f"Variable '{variable_name}' not found in '{func.getName()}'. "
-            f"Available: {sorted(all_names)}"
-        )
+    found_sym = _find_local_symbol(high_func, func, variable_name)
 
     old_type = str(found_sym.getDataType())
 
@@ -655,17 +482,13 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
                 found_sym, found_sym.getName(), new_type, SourceType.USER_DEFINED
             )
 
-    _maybe_swing(ctx, do_update)
-    pi.decompiler_pool.invalidate_all()
-    ctx.save_program(pi)
+    _commit(ctx, pi, do_update)
 
     # Read back via a fresh decompilation to verify the change took effect.
     verified = False
     actual_type = str(new_type.getName())
     try:
-        with pi.decompiler_pool.acquire() as decompiler:
-            from ghidra.util.task import TaskMonitor as _TM
-            result2 = decompiler.decompileFunction(func, 30, _TM.DUMMY)
+        result2 = _decompile(pi, func, 30)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -709,34 +532,9 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
     func     = _find_function(pi, func_name)
 
     # ---- Step 1: decompile to get HighFunction (blocking; not on Swing EDT) --
-    from ghidra.util.task import TaskMonitor
+    high_func = _decompile_high(pi, func, timeout)
 
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
-
-    # Find the symbol by name in the local symbol map
-    found_sym = None
-    all_names = []
-    for sym in high_func.getLocalSymbolMap().getSymbols():
-        sym_name = str(sym.getName())
-        all_names.append(sym_name)
-        if sym_name == variable_name:
-            found_sym = sym
-            break
-
-    if found_sym is None:
-        raise ValueError(
-            f"Variable '{variable_name}' not found in '{func.getName()}'. "
-            f"Available: {sorted(all_names)}"
-        )
+    found_sym = _find_local_symbol(high_func, func, variable_name)
 
     # ---- Step 2: commit the name change (on Swing EDT in GUI mode) -----------
     def do_update():
@@ -750,16 +548,12 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
                 found_sym, new_name, None, SourceType.USER_DEFINED
             )
 
-    _maybe_swing(ctx, do_update)
-    pi.decompiler_pool.invalidate_all()
-    ctx.save_program(pi)
+    _commit(ctx, pi, do_update)
 
     # Read back via a fresh decompilation to verify the change took effect.
     verified = False
     try:
-        with pi.decompiler_pool.acquire() as decompiler:
-            from ghidra.util.task import TaskMonitor as _TM
-            result2 = decompiler.decompileFunction(func, 30, _TM.DUMMY)
+        result2 = _decompile(pi, func, 30)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -826,18 +620,7 @@ def _handle_batch_edit_variables(ctx, args: dict) -> dict:
     func = _find_function(pi, func_name)
 
     # ---- Step 1: decompile ONCE (blocking; not on Swing EDT) -----------------
-    from ghidra.util.task import TaskMonitor
-
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
+    high_func = _decompile_high(pi, func, timeout)
 
     # Index the single snapshot by both name and storage.
     by_name: dict = {}
@@ -944,17 +727,13 @@ def _handle_batch_edit_variables(ctx, args: dict) -> dict:
                     except Exception as e:
                         item["apply_error"] = (type(e).__name__, str(e))
 
-        _maybe_swing(ctx, do_batch)
-        pi.decompiler_pool.invalidate_all()
-        ctx.save_program(pi)
+        _commit(ctx, pi, do_batch)
 
     # ---- Step 4: single re-decompile to verify what actually stuck ----------
     verify_map: dict = {}
     if resolved:
         try:
-            with pi.decompiler_pool.acquire() as decompiler:
-                from ghidra.util.task import TaskMonitor as _TM
-                result2 = decompiler.decompileFunction(func, timeout, _TM.DUMMY)
+            result2 = _decompile(pi, func, timeout)
             hf2 = result2.getHighFunction()
             if hf2:
                 for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -1078,8 +857,6 @@ def _handle_create_function(ctx, args: dict) -> dict:
         for r in body:
             body_ranges.append(f"{_fmt_address(r.getMinAddress())}-{_fmt_address(r.getMaxAddress())}")
 
-        pi.decompiler_pool.invalidate_all()
-
         return {
             "name":    str(func.getName()),
             "address": _fmt_address(func.getEntryPoint()),
@@ -1087,9 +864,7 @@ def _handle_create_function(ctx, args: dict) -> dict:
             "body":    body_ranges,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create)
 
 
 def _handle_set_calling_convention(ctx, args: dict) -> dict:
@@ -1142,7 +917,6 @@ def _handle_set_calling_convention(ctx, args: dict) -> dict:
         ):
             func.setCallingConvention(convention)
 
-        pi.decompiler_pool.invalidate_all()
         new_cc = str(func.getCallingConventionName())
         return {
             "address":        address,
@@ -1152,9 +926,7 @@ def _handle_set_calling_convention(ctx, args: dict) -> dict:
             "verified":       new_cc == convention,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set)
 
 
 def _handle_set_thunk(ctx, args: dict) -> dict:
@@ -1198,8 +970,6 @@ def _handle_set_thunk(ctx, args: dict) -> dict:
         ):
             thunk_func.setThunkedFunction(target_func)
 
-        pi.decompiler_pool.invalidate_all()
-
         # Verify
         thunked = thunk_func.getThunkedFunction(False)
         verified = (thunked is not None and
@@ -1213,9 +983,7 @@ def _handle_set_thunk(ctx, args: dict) -> dict:
             "verified":       verified,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set)
 
 
 def _handle_set_flow_override(ctx, args: dict) -> dict:
@@ -1286,7 +1054,6 @@ def _handle_set_flow_override(ctx, args: dict) -> dict:
         ):
             instr.setFlowOverride(flow_override)
 
-        pi.decompiler_pool.invalidate_all()
         new_override = str(instr.getFlowOverride())
 
         return {
@@ -1296,36 +1063,7 @@ def _handle_set_flow_override(ctx, args: dict) -> dict:
             "verified":     new_override == override_upper,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
-
-
-def _resolve_namespace(program, ns_path: str):
-    """Resolve a namespace by name or path. Raises ValueError if not found."""
-    st = program.getSymbolTable()
-    global_ns = program.getGlobalNamespace()
-
-    # Try the simple case: direct child of global namespace
-    ns = st.getNamespace(ns_path, global_ns)
-    if ns is not None:
-        return ns
-
-    # Try walking a path like "Outer::Inner"
-    parts = ns_path.replace("::", "/").split("/")
-    current = global_ns
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        child = st.getNamespace(part, current)
-        if child is None:
-            raise ValueError(
-                f"Namespace '{ns_path}' not found. "
-                f"Could not resolve component '{part}' under '{current.getName(True)}'."
-            )
-        current = child
-    return current
+    return _commit(ctx, pi, do_set)
 
 
 def _handle_create_namespace(ctx, args: dict) -> dict:
@@ -1389,9 +1127,7 @@ def _handle_create_namespace(ctx, args: dict) -> dict:
             "created": True,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create, invalidate=False)
 
 
 def _handle_list_namespaces(ctx, args: dict) -> dict:
@@ -1605,12 +1341,9 @@ def _handle_batch_rename(ctx, args: dict) -> dict:
                                 "error": type(e).__name__, "message": str(e),
                             }
 
-            pi.decompiler_pool.invalidate_all()
-
         return [r for r in results if r is not None]
 
-    final_results = _maybe_swing(ctx, do_batch)
-    ctx.save_program(pi)
+    final_results = _commit(ctx, pi, do_batch)
 
     ok_count = sum(1 for r in final_results if r.get("ok"))
     return {
@@ -1643,24 +1376,7 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
 
     def do_batch():
-        try:
-            from ghidra.program.model.listing import CommentType
-            type_map = {
-                "plate":      CommentType.PLATE,
-                "pre":        CommentType.PRE,
-                "post":       CommentType.POST,
-                "eol":        CommentType.EOL,
-                "repeatable": CommentType.REPEATABLE,
-            }
-        except ImportError:
-            from ghidra.program.model.listing import CodeUnit
-            type_map = {
-                "plate":      CodeUnit.PLATE_COMMENT,
-                "pre":        CodeUnit.PRE_COMMENT,
-                "post":       CodeUnit.POST_COMMENT,
-                "eol":        CodeUnit.EOL_COMMENT,
-                "repeatable": CodeUnit.REPEATABLE_COMMENT,
-            }
+        type_map = _comment_types()
 
         results  = [None] * len(operations)
         resolved = []
@@ -1719,12 +1435,9 @@ def _handle_batch_set_comment(ctx, args: dict) -> dict:
                             "error": type(e).__name__, "message": str(e),
                         }
 
-            pi.decompiler_pool.invalidate_all()
-
         return [r for r in results if r is not None]
 
-    final_results = _maybe_swing(ctx, do_batch)
-    ctx.save_program(pi)
+    final_results = _commit(ctx, pi, do_batch)
 
     ok_count = sum(1 for r in final_results if r.get("ok"))
     return {
@@ -1771,16 +1484,13 @@ def _handle_delete_function(ctx, args: dict) -> dict:
         ):
             removed = pi.program.getFunctionManager().removeFunction(func_addr)
 
-        pi.decompiler_pool.invalidate_all()
         return {
             "address": _fmt_address(func_addr),
             "name":    func_name,
             "deleted": bool(removed),
         }
 
-    result = _maybe_swing(ctx, do_delete)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_delete)
 
 
 register_handler("create_label",              _handle_create_label)

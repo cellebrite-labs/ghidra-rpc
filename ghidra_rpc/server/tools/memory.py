@@ -289,8 +289,8 @@ def _handle_write_bytes(ctx, args: dict) -> dict:
     automatically, and ``disassemble`` only reads the listing.
     """
     from ghidra_rpc.server.context import _parse_address
-    from ghidra_rpc.server.tools.modifications import (
-        _maybe_swing,
+    from ghidra_rpc.server.tools._common import (
+        _commit,
         ghidra_transaction,
     )
 
@@ -358,9 +358,7 @@ def _handle_write_bytes(ctx, args: dict) -> dict:
             "verified": verified,
         }
 
-    result = _maybe_swing(ctx, do_write)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_write)
 
 
 register_handler("read_bytes", _handle_read_bytes)

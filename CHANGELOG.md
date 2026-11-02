@@ -73,9 +73,17 @@
   closed`) until restart; it switches to the project-folder copy. Programs
   opened from the project folder are no longer re-opened on every command,
   which stacked an unreleased Ghidra consumer each time.
-- `set-comment`/`batch-set-comment` follow the 0x-prefix rule: a function
+- **Breaking:** `set-comment`/`batch-set-comment` follow the 0x-prefix rule: a function
   named like hex (`add`, `cafe`) is resolved by name, not taken as address
   `0xadd`. Bare hex is now a name query, as in every other command.
+- Argument errors found after option parsing now use the JSON error envelope
+  with exit code 2, like other usage errors. Before, a malformed
+  `--json-file` on `batch-rename`/`batch-set-comment`/`batch-edit-variable`
+  and a non-integer VALUE for `create-enum`, `modify-enum --add` or
+  `set-equate` crashed with a Python traceback. Bad inline `--json`, missing
+  `--json`/`--json-file`, unpaired `create-struct`/`create-union`/`create-enum`
+  tokens, `modify-struct` without a field or change, and a missing project
+  printed plain text to stderr with exit code 1.
 - `write-bytes` docs (`SKILL.md`, `--help`, handler docstring) said a patch
   only leaves the listing stale and suggested `disassemble` to refresh it.
   Writing over a disassembled instruction is rejected, and `disassemble` only

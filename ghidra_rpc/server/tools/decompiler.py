@@ -4,62 +4,9 @@ from __future__ import annotations
 
 import re
 
-from ghidra_rpc.server.context import _fmt_address, _looks_like_address, _parse_address
+from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-
-
-def _find_function(pi, name_or_address: str):
-    """Resolve a function by name or hex address. Raises ValueError if not found or ambiguous.
-
-    Only 0x-prefixed input (optionally space-qualified, as _fmt_address emits
-    it) is treated as an address.  Bare hex is a name query, but never
-    partial-matches auto-generated names like FUN_00101139 — that would
-    silently pick whichever FUN_ happens to contain the digits.
-    """
-    prog = pi.program
-    fm = prog.getFunctionManager()
-
-    if _looks_like_address(name_or_address):
-        addr = _parse_address(prog, name_or_address)
-        func = fm.getFunctionAt(addr) or fm.getFunctionContaining(addr)
-        if func:
-            return func
-        raise ValueError(f"No function at or containing address {name_or_address}")
-
-    from ghidra.program.model.symbol import SourceType
-
-    # Try as exact name
-    name_lower = name_or_address.lower()
-    bare_hex = bool(re.fullmatch(r"[0-9a-f]+", name_lower))
-    exact_matches = []
-    partial_matches = []
-
-    for func in fm.getFunctions(True):
-        func_name = str(func.getName())
-        if func_name.lower() == name_lower:
-            exact_matches.append(func)
-        elif name_lower in func_name.lower():
-            if bare_hex and func.getSymbol().getSource() == SourceType.DEFAULT:
-                continue
-            partial_matches.append(func)
-
-    if len(exact_matches) == 1:
-        return exact_matches[0]
-    elif len(exact_matches) > 1:
-        suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in exact_matches]
-        raise ValueError(
-            f"Ambiguous function name '{name_or_address}'. Matches: {suggestions}"
-        )
-
-    if len(partial_matches) == 1:
-        return partial_matches[0]
-    elif len(partial_matches) > 1:
-        suggestions = [f"{f.getName()} @ {_fmt_address(f.getEntryPoint())}" for f in partial_matches[:10]]
-        raise ValueError(
-            f"Ambiguous function name '{name_or_address}'. Partial matches: {suggestions}"
-        )
-
-    raise ValueError(f"Function '{name_or_address}' not found. If '{name_or_address}' is an address, pass it with a 0x prefix.")
+from ghidra_rpc.server.tools._common import _decompile, _find_function  # _find_function is re-exported
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
@@ -74,10 +21,7 @@ def _handle_decompile(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
     func = _find_function(pi, func_name)
 
-    from ghidra.util.task import TaskMonitor
-
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+    result = _decompile(pi, func, timeout)
 
     error_msg = result.getErrorMessage()
     if error_msg and error_msg.strip():
@@ -144,9 +88,6 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
                                    searched (pass it back as address_min to
                                    resume), or None if coverage is complete
     """
-
-    from ghidra.util.task import TaskMonitor
-
     binary        = args.get("binary", "")
     pattern_str   = args.get("pattern", "")
     class_filter  = args.get("class_filter", "")
@@ -199,8 +140,7 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
         functions_searched += 1
 
         try:
-            with pi.decompiler_pool.acquire() as decompiler:
-                result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+            result = _decompile(pi, func, timeout)
             decompiled = result.getDecompiledFunction()
             if decompiled is None:
                 continue

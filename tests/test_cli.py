@@ -64,6 +64,90 @@ class TestUsageErrorsAsJson:
         assert code == 0
 
 
+
+class TestArgumentErrorsAsJson:
+    """Argument errors the command bodies detect (bad JSON, non-integer values,
+    unpaired tokens, no project) use the same JSON envelope as Click's own
+    usage errors, never a traceback or a plain-text stderr message."""
+
+    @pytest.fixture
+    def no_rpc(self, monkeypatch):
+        import ghidra_rpc.cli as cli_mod
+
+        def fail(*args, **kwargs):
+            raise AssertionError("argument error must be caught before any RPC")
+        monkeypatch.setattr(cli_mod, "_rpc_command", fail)
+
+    def _usage_error(self, monkeypatch, capsys, argv, tmp_path, *, project=True):
+        if project:
+            argv = argv + ["--project", str(tmp_path / "test.gpr")]
+        code = _run_main(monkeypatch, argv)
+        data = json.loads(capsys.readouterr().out)
+        assert code == 2
+        assert data["ok"] is False
+        return data["message"]
+
+    def test_malformed_json_file(self, monkeypatch, capsys, tmp_path, no_rpc):
+        bad = tmp_path / "ops.json"
+        bad.write_text("{bad")
+        for cmd in (["batch-rename", "b"], ["batch-set-comment", "b"],
+                    ["batch-edit-variable", "b", "f"]):
+            msg = self._usage_error(monkeypatch, capsys,
+                                    cmd + ["--json-file", str(bad)], tmp_path)
+            assert "--json-file" in msg
+
+    def test_malformed_inline_json(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys,
+                                ["batch-rename", "b", "--json", "{bad"], tmp_path)
+        assert "invalid JSON" in msg
+
+    def test_missing_json(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys, ["batch-set-comment", "b"], tmp_path)
+        assert "--json-file" in msg
+
+    def test_non_integer_enum_value(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys,
+                                ["create-enum", "b", "E", "A", "zz"], tmp_path)
+        assert "'zz' is not a valid integer" in msg
+
+    def test_non_integer_modify_enum_value(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys,
+                                ["modify-enum", "b", "E", "--add", "A:zz"], tmp_path)
+        assert "'zz' is not a valid integer" in msg
+
+    def test_non_integer_equate_value(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys,
+                                ["set-equate", "b", "0x1", "N", "zz"], tmp_path)
+        assert "'zz' is not a valid integer" in msg
+
+    def test_unpaired_fields(self, monkeypatch, capsys, tmp_path, no_rpc):
+        msg = self._usage_error(monkeypatch, capsys,
+                                ["create-union", "b", "U", "int"], tmp_path)
+        assert "pairs of TYPE NAME" in msg
+
+    def test_no_project(self, monkeypatch, capsys, tmp_path, no_rpc):
+        monkeypatch.delenv("GHIDRA_RPC_PROJECT", raising=False)
+        msg = self._usage_error(monkeypatch, capsys, ["imports", "b"], tmp_path,
+                                project=False)
+        assert "No project specified" in msg
+
+    def test_hex_values_still_parse(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def fake_rpc_command(gpr, cmd, args, socket_timeout=None):
+            captured[cmd] = args
+
+        import ghidra_rpc.cli as cli_mod
+        monkeypatch.setattr(cli_mod, "_rpc_command", fake_rpc_command)
+        gpr = ["--project", str(tmp_path / "test.gpr")]
+        runner = CliRunner()
+        assert runner.invoke(cli, ["create-enum", "b", "E", "A", "0x81"] + gpr).exit_code == 0
+        assert runner.invoke(cli, ["set-equate", "b", "0x1", "N", "0x81"] + gpr).exit_code == 0
+        assert runner.invoke(cli, ["modify-enum", "b", "E", "--add", "A:0"] + gpr).exit_code == 0
+        assert captured["create_enum"]["values"] == [{"name": "A", "value": 0x81}]
+        assert captured["set_equate"]["value"] == 0x81
+        assert captured["modify_enum"]["add"] == [{"name": "A", "value": 0}]
+
 class TestSetCommentUsesCommentOption:
     """COMMENT is passed via --comment (matching set-bookmark's --comment
     option), not positionally -- see ghidra-rpc-issues-20260705-122346.md #1."""

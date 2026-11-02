@@ -108,7 +108,7 @@ qualifiers, so `_parse_address()` passes the string straight through; the
 round-trip was verified for every space of the test ELF plus an overlay.
 
 `_looks_like_address()` (the `0x<hex>` tail, optionally space-qualified) is
-what `_find_function()` and `xrefs._resolve_address()` use to decide that a
+what `_find_function()` and `_resolve_address()` (both in `tools/_common.py`) use to decide that a
 target is an address. Address-shaped input that hits no function raises rather
 than falling through to name matching. Bare hex stays a name query, but never
 partial-matches `SourceType.DEFAULT` names (`FUN_...`): otherwise `1139` would
@@ -153,7 +153,7 @@ replace entry-point scripts that the running daemon has open. Use
 
 ### 5. `DataTypeParser` is GUI-only
 `ghidra.util.data.DataTypeParser` requires a `DataTypeQueryService` which is only
-available in GUI mode. Use `_resolve_data_type()` in `modifications.py` instead —
+available in GUI mode. Use `_resolve_data_type()` in `tools/_common.py` instead —
 it works in both headless and GUI mode by implementing the common cases directly.
 
 ### 6. `HighFunctionDBUtil.updateDBVariable` signature
@@ -196,7 +196,7 @@ any `ghidra.*` Java imports. Importing Ghidra classes at module level in a tool 
 will cause `NoClassDefFoundError` on daemon start.
 
 ### 11. Namespace resolution
-`_resolve_namespace()` in `modifications.py` handles both simple names (direct child
+`_resolve_namespace()` in `tools/_common.py` handles both simple names (direct child
 of global namespace) and path-style names with `::` or `/` separators. Example:
 `"Outer::Inner"` resolves by walking from the global namespace through `Outer` to `Inner`.
 

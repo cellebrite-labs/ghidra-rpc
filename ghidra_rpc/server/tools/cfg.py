@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools.decompiler import _find_function
+from ghidra_rpc.server.tools._common import _decompile_high, _find_function
 
 
 def _handle_basic_blocks(ctx, args: dict) -> dict:
@@ -236,22 +236,7 @@ def _get_raw_pcode(pi, func, limit: int) -> dict:
 
 def _get_high_pcode(pi, func, timeout: int, limit: int) -> dict:
     """Get high (SSA) P-code from the decompiler."""
-    from ghidra.util.task import TaskMonitor
-
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(
-            f"Decompilation failed for '{func.getName()}': {err}"
-        )
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(
-            f"Could not obtain high function for '{func.getName()}'"
-        )
+    high_func = _decompile_high(pi, func, timeout)
 
     ops = []
     truncated = False

@@ -853,7 +853,7 @@ class GuiContext:
         pi = self.get_program(binary)
 
         if target_type == "function":
-            from ghidra_rpc.server.tools.decompiler import _find_function
+            from ghidra_rpc.server.tools._common import _find_function
             func = _find_function(pi, target)
             addr_obj = func.getEntryPoint()
         elif target_type == "address":
