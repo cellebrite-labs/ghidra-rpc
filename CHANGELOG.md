@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-02
+
 ### Added
 
 - `search-decompiled` reports which functions it actually covered:
@@ -53,13 +55,9 @@
 - `functions` and `search-decompiled` reject an `--address-min` above
   `--address-max` instead of returning an empty result.
 - **Breaking:** `disassemble` no longer returns the `instructions` array by
-  default — it was a verbatim duplicate of the `listing` string, which already
-  carries every field it did (address, bytes, mnemonic, operands, EOL comment;
-  only `length` is absent, and that is the byte count). Pass
-  `--with-instructions` when you need the machine-parseable array. The default
-  response is roughly a quarter the size, measured across `--count` 8 to 500.
-  `ghidra-rpc disassemble <binary> <address>` now returns
-  `{address, count, listing}`; add `--with-instructions` for the previous shape.
+  default; it duplicated the `listing` string. The default response is now
+  `{address, count, listing}` (about a quarter the size). Pass
+  `--with-instructions` for the previous shape.
 
 ### Fixed
 
@@ -78,15 +76,11 @@
   (`g_config` no longer resolves to `init_g_config`), and report an
   ambiguous name when several distinct functions share it exactly (an
   import's PLT and intermediate thunks still count as one).
-- `stop`, `stop --all` and `restart` wait until the daemon has actually shut
-  down: its process has exited (in GUI mode Ghidra closes the project only
-  after the endpoint is removed). The `stop` reply carries the daemon's pid
-  for this. `stop --all` asks
-  every daemon first, so their shutdowns overlap. `restart` used to take
-  the dying daemon's reply for the new one's and report success at once, so a
-  quick second restart or command could start another daemon on the same
-  project (`LockException: Unable to lock project!`). New errors:
-  `StopTimeout`/`RestartTimeout` if shutdown takes over 120 s.
+- `stop`, `stop --all` and `restart` wait until the daemon process has
+  exited, so `restart` no longer reports success early and a following
+  command can no longer hit `LockException: Unable to lock project!`.
+  `stop --all` shuts daemons down concurrently. New errors:
+  `StopTimeout`/`RestartTimeout` after 120 s.
 - A malformed session file (e.g. `"project_gpr": null`) is treated as no
   session instead of crashing `status` and auto-restart with a `TypeError`.
 - Label lookups by name use Ghidra's symbol-name index, scanning every
@@ -143,23 +137,9 @@
   chain, so it returns the real call sites instead of only the GOT slot and
   thunk (on x86-64 ELF the PLT thunk targets an intermediate thunk, not the
   EXTERNAL function).
-- `--detach`'d daemons lost their persisted `ghidra_install_dir` moments
-  after starting, on every platform: the detached child re-saves its own
-  `Session` from bare `--mode`/`--project` argv, clobbering the parent's
-  value with `null`. This broke `send_request_with_auto_restart` healing a
-  dead daemon from an environment without `GHIDRA_INSTALL_DIR` set (cron,
-  sudo, a bare ssh call). Fixed by passing `--ghidra-install-dir` to the
-  child too.
-
-- Tests: socket-binding tests now use a short temp directory. macOS caps
-  `AF_UNIX` `sun_path` at 104 bytes (Linux allows 108) and pytest's `tmp_path`
-  there is rooted under `/private/var/folders/<random>/T/...`, already ~120
-  bytes, so every test that bound a socket failed with
-  `OSError: AF_UNIX path too long`. A `short_tmp_path` fixture in
-  `tests/conftest.py` roots those under `/tmp` instead. Test-harness only —
-  real endpoints are `/tmp/ghidra-rpc-<hash>.sock` at 29 bytes and were never
-  affected. This is what kept macOS out of the CI matrix.
-
+- `--detach`'d daemons no longer lose their persisted `ghidra_install_dir`
+  (auto-restart now works from an environment without `GHIDRA_INSTALL_DIR`);
+  it is passed to the child via `--ghidra-install-dir`.
 - Headless mode: a write that aborted mid-transaction could silently discard
   the *next* successful write on the following save, even an unrelated write
   from a later command (see

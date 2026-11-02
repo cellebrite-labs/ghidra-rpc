@@ -73,7 +73,7 @@ or persist it with `setx GHIDRA_INSTALL_DIR "C:\Tools\ghidra_11.3"`.
 
 ```bash
 ghidra-rpc --version
-# Should print: ghidra-rpc, version 0.2.0
+# Should print: ghidra-rpc, version 0.3.0
 ```
 
 ## What Gets Installed
