@@ -281,10 +281,12 @@ def _handle_write_bytes(ctx, args: dict) -> dict:
         hex      -- hex string that was written
         verified -- True if read-back matches the written bytes
 
-    Note: this writes raw bytes into the program database. It does NOT
-    automatically re-disassemble the affected region. If you overwrote
-    code bytes, use ``disassemble`` or ``assemble`` afterwards to update
-    the instruction listing.
+    Note: this writes raw bytes into the program database. Ghidra rejects
+    a write that overlaps a defined instruction (``MemoryAccessException``,
+    "conflicts with instruction"); data bytes write fine. To patch code,
+    ``clear_data_range`` over the instruction first, then write, then
+    ``assemble`` to rebuild it -- nothing re-disassembles the region
+    automatically, and ``disassemble`` only reads the listing.
     """
     from ghidra_rpc.server.context import _parse_address
     from ghidra_rpc.server.tools.modifications import (

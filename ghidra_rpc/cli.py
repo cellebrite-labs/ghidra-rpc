@@ -880,8 +880,12 @@ def write_bytes(binary: str, address: str, hex_data: str, project: str | None):
       ghidra-rpc write-bytes binary 0x401234 "90 90 90"
       ghidra-rpc write-bytes binary 0x401234 909090
 
-    Does NOT auto-redisassemble the affected region. Use 'disassemble'
-    or 'assemble' afterwards to update the instruction listing.
+    Writing over a disassembled instruction is rejected. To patch code,
+    run 'clear-data-range' over the instruction first, then write, then
+    'assemble' to rebuild the instruction ('disassemble' only reads the
+    listing; nothing re-disassembles the region automatically). Bytes
+    that are not part of an instruction (data, strings, .bss) can be
+    written directly.
     """
     _rpc_command(_resolve_project(project), "write_bytes", {
         "binary": binary, "address": address, "hex": hex_data,

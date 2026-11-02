@@ -167,7 +167,7 @@ which binary it came from.
 | Command | Description | Output shape |
 |---------|-------------|--------------|
 | `ghidra-rpc memory-map <binary>` | List all memory segments (name, address range, size, rwx flags, type) | `{segments: [{name, start, end, size, read, write, execute, initialized, type, source_name}], count}` |
-| `ghidra-rpc write-bytes <binary> <address> <hex>` | Write raw bytes to an address; does NOT auto-redisassemble | `{address, length, hex, verified}` |
+| `ghidra-rpc write-bytes <binary> <address> <hex>` | Write raw bytes (max 4096) to an address. Fails over a disassembled instruction — `clear-data-range` it first, then `assemble` to rebuild the instruction (`disassemble` only reads); data bytes write directly | `{address, length, hex, verified}` |
 | `ghidra-rpc read-bytes <binary> <address> <length>` | Read raw bytes; LENGTH accepts decimal or `0x` hex | `{address, length, hex, hexdump}` |
 | `ghidra-rpc read-pointers <binary> <address> <count> [--pointer-size N]` | Read COUNT pointers and resolve each to its symbol (vtables, import/jump tables, RTTI arrays) | `{address, count, pointer_size, endian, pointers:[{index, offset, slot_address, value, target_address, target_name, target_kind}]}` |
 | `ghidra-rpc list-vtable <binary> <address> [--count N] [--pointer-size N]` | Dump a C++ vtable's slots as resolved methods; ADDRESS may be a symbol name. Without `--count`, stops at the next vftable symbol / first non-function pointer (see `stopped_reason`) | `{vtable_address, symbol, count, pointer_size, stopped_reason, slots:[{index, offset, slot_address, target_address, target_name, target_kind}]}` |

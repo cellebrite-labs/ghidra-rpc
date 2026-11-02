@@ -55,6 +55,11 @@
 
 ### Fixed
 
+- `write-bytes` docs (`SKILL.md`, `--help`, handler docstring) said a patch
+  only leaves the listing stale and suggested `disassemble` to refresh it.
+  Writing over a disassembled instruction is rejected, and `disassemble` only
+  reads. They now describe the working route: `clear-data-range`, then
+  `write-bytes`, then `assemble`.
 - `xrefs-to` on an import's `EXTERNAL:` address now follows the full thunk
   chain, so it returns the real call sites instead of only the GOT slot and
   thunk (on x86-64 ELF the PLT thunk targets an intermediate thunk, not the
