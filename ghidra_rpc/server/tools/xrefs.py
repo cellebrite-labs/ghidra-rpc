@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools._common import _find_function, _resolve_address  # also re-exported
+from ghidra_rpc.server.tools._common import _resolve_address
 
 
 def _collect_xrefs_at(pi, addr, limit: int) -> list[dict]:
@@ -131,9 +131,11 @@ def _is_stack_ref(ref) -> bool:
 def _handle_xrefs_from(ctx, args: dict) -> dict:
     """Find cross-references FROM a target (what does this call/reference?).
 
-    When target is a function, iterates all instructions in the function body
-    to collect outgoing references. When target is a specific address, only
-    checks that address.
+    The target is resolved like every name-or-address argument
+    (``_resolve_address``: 0x address, exact function, exact label, then a
+    partial function match).  If it lands on a function's entry point, all
+    instructions in the function body are scanned; otherwise (a label, or an
+    address inside a function) only that address's own references are listed.
     """
     binary = args.get("binary", "")
     target = args.get("target", "")
@@ -147,12 +149,8 @@ def _handle_xrefs_from(ctx, args: dict) -> dict:
     rm = pi.program.getReferenceManager()
     fm = pi.program.getFunctionManager()
 
-    # Try to resolve as a function first — if so, scan all instructions
-    func = None
-    try:
-        func = _find_function(pi, target)
-    except ValueError:
-        pass
+    addr = _resolve_address(pi, target)
+    func = fm.getFunctionAt(addr)
 
     xrefs = []
     if func is not None:
@@ -178,7 +176,6 @@ def _handle_xrefs_from(ctx, args: dict) -> dict:
                 break
     else:
         # Single address lookup
-        addr = _resolve_address(pi, target)
         for ref in rm.getReferencesFrom(addr):
             if no_stack and _is_stack_ref(ref):
                 continue

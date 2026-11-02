@@ -875,7 +875,9 @@ def _handle_modify_enum(ctx, args: dict) -> dict:
 
     def do_modify():
         dtm      = pi.program.getDataTypeManager()
-        enum_dt  = dtm.getDataType(f"/{enum_name}")
+        enum_dt  = dtm.getDataType(
+            enum_name if enum_name.startswith("/") else f"/{enum_name}"
+        )
 
         if enum_dt is None:
             # Fall back to a substring search.

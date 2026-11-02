@@ -211,9 +211,10 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
                 })
             else:
                 _json_error("StartTimeout", str(e))
-        except RuntimeError as e:
-            # The daemon process exited during startup; the message carries
-            # its log tail (e.g. a bad GHIDRA_INSTALL_DIR).
+        except (RuntimeError, OSError) as e:
+            # The daemon process exited during startup (the message carries
+            # its log tail, e.g. a bad GHIDRA_INSTALL_DIR) or could not be
+            # launched at all.  TimeoutError is an OSError, handled above.
             _json_error("StartFailed", str(e))
     else:
         # Blocking foreground start — set GHIDRA_INSTALL_DIR in current process if given
@@ -241,14 +242,14 @@ def start(project: str | None, headless: bool, detach: bool, timeout: float | No
 def restart(project: str | None, headless: bool | None, timeout: float | None,
             ghidra_install_dir: str | None):
     """Restart the daemon in the background."""
-    from ghidra_rpc.daemon import default_start_timeout, start_background, stop_daemon
+    from ghidra_rpc.daemon import (
+        STOP_TIMEOUT, default_start_timeout, start_background, stop_daemon,
+    )
 
     gpr = _resolve_project(project)
     sock = session_mod.socket_path_for_project(gpr)
 
-    # Stop existing daemon if running
-    stop_daemon(sock)
-
+    # Read the session before stopping: the daemon deletes it on shutdown.
     session = session_mod.load(gpr)
     if session is None:
         if headless:
@@ -278,6 +279,14 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
     elif not session.ghidra_install_dir and os.environ.get("GHIDRA_INSTALL_DIR"):
         session.ghidra_install_dir = Path(os.environ["GHIDRA_INSTALL_DIR"])
 
+    # Wait for the old daemon to finish: until then it still answers pings
+    # and holds the project lock.
+    try:
+        stop_daemon(sock, wait=STOP_TIMEOUT,
+                    session_file=session_mod.session_file_path(gpr))
+    except TimeoutError as e:
+        _json_error("RestartTimeout", str(e))
+
     effective_timeout = (timeout if timeout is not None
                          else default_start_timeout(session.mode))
 
@@ -304,7 +313,7 @@ def restart(project: str | None, headless: bool | None, timeout: float | None,
             })
         else:
             _json_error("RestartTimeout", str(e))
-    except RuntimeError as e:
+    except (RuntimeError, OSError) as e:
         _json_error("RestartFailed", str(e))
 
 
@@ -359,8 +368,14 @@ def status(project: str | None):
 @click.option("--all", "stop_all", is_flag=True, default=False,
               help="Stop all running instances (mutually exclusive with --project).")
 def stop(project: str | None, stop_all: bool):
-    """Stop the daemon."""
-    from ghidra_rpc.daemon import stop_daemon
+    """Stop the daemon and wait until it has shut down."""
+    from ghidra_rpc.daemon import STOP_TIMEOUT, stop_daemon
+
+    def stop_and_wait(sock: Path, gpr: Path | None) -> bool:
+        return stop_daemon(
+            sock, wait=STOP_TIMEOUT,
+            session_file=session_mod.session_file_path(gpr) if gpr else None,
+        )
 
     if stop_all and project:
         _json_error("InvalidArgs", "--all and --project are mutually exclusive.")
@@ -374,10 +389,12 @@ def stop(project: str | None, stop_all: bool):
         failed: list[str] = []
         for inst in instances:
             label = inst.get("project") or inst["socket"]
-            if stop_daemon(Path(inst["socket"])):
-                stopped.append(label)
-            else:
-                failed.append(label)
+            gpr = Path(inst["project"]) if inst.get("project") else None
+            try:
+                ok = stop_and_wait(Path(inst["socket"]), gpr)
+            except TimeoutError:
+                ok = False
+            (stopped if ok else failed).append(label)
         _json_output({"ok": True, "result": {
             "stopped": stopped, "failed": failed, "count": len(stopped),
         }})
@@ -386,7 +403,11 @@ def stop(project: str | None, stop_all: bool):
     gpr = _resolve_project(project)
     sock = session_mod.socket_path_for_project(gpr)
 
-    if stop_daemon(sock):
+    try:
+        running = stop_and_wait(sock, gpr)
+    except TimeoutError as e:
+        _json_error("StopTimeout", str(e))
+    if running:
         _json_output({"ok": True, "result": {"status": "stopped"}})
     else:
         _json_error("NotRunning", "Daemon is not running.")

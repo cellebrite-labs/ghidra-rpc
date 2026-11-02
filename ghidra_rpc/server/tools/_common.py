@@ -169,6 +169,11 @@ def _resolve_address(pi, target: str):
         func, function_error = _find_function(pi, target), None
     except ValueError as e:
         func, function_error = None, e
+        # Several functions with exactly this name are ambiguous, unless they
+        # are one import's thunk chain (an ELF PLT thunk and the intermediate
+        # thunk both named "printf"), which the symbol scan below handles.
+        if not _one_function_family(_exact_functions(pi, target)):
+            raise
     if func is not None and str(func.getName()).lower() == target.lower():
         return func.getEntryPoint()
 
@@ -192,6 +197,23 @@ def _resolve_address(pi, target: str):
         return func.getEntryPoint()
 
     raise function_error
+
+
+def _exact_functions(pi, name: str) -> list:
+    """Every function whose name equals *name* (case-insensitive)."""
+    name_lower = name.lower()
+    return [f for f in pi.program.getFunctionManager().getFunctions(True)
+            if str(f.getName()).lower() == name_lower]
+
+
+def _one_function_family(funcs) -> bool:
+    """True if *funcs* has at most one member once each thunk is followed to
+    the function it ultimately forwards to."""
+    targets = set()
+    for f in funcs:
+        final = f.getThunkedFunction(True) if f.isThunk() else f
+        targets.add(str((final or f).getEntryPoint()))
+    return len(targets) <= 1
 
 
 def _resolve_data_type(program, type_str: str):

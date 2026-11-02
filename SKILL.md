@@ -68,7 +68,7 @@ Examples below omit the `cd <skill-dir> && uv run` prefix.
 | Command | Description | Example |
 |---------|-------------|---------|
 | `ghidra-rpc start --project <gpr> [--headless] [--detach] [--ghidra-install-dir DIR]` | Start daemon (blocking by default; `--detach` backgrounds it) | `ghidra-rpc start -p /tmp/re.gpr --headless --detach` |
-| `ghidra-rpc stop --project <gpr>` | Stop the daemon | `ghidra-rpc stop -p /tmp/re.gpr` |
+| `ghidra-rpc stop --project <gpr>` | Stop the daemon (returns once it has saved and shut down) | `ghidra-rpc stop -p /tmp/re.gpr` |
 | `ghidra-rpc status --project <gpr>` | Check if daemon is running | `ghidra-rpc status -p /tmp/re.gpr` |
 | `ghidra-rpc list-instances [--all]` | List running daemons and their projects (`--all` also lists registered-but-dead ones); use it to find the `--project` of a daemon that is already up | `ghidra-rpc list-instances` |
 | `ghidra-rpc stop --all` | Stop every running daemon | `ghidra-rpc stop --all` |
@@ -158,7 +158,7 @@ into `_` (and leaving every other character, including non-ASCII/CJK text, untou
 | Command | Description | Output shape |
 |---------|-------------|--------------|
 | `ghidra-rpc xrefs-to <binary> <target> [--limit N] [--all-binaries]` | Who references this? | `{xrefs: [{from_address, from_function, type}], count}` |
-| `ghidra-rpc xrefs-from <binary> <target> [--limit N] [--no-stack]` | What does this reference? (`--no-stack` hides `Stack[-0x...]` entries) | `{xrefs: [{to_address, to_function, type}], count}` |
+| `ghidra-rpc xrefs-from <binary> <target> [--limit N] [--no-stack]` | What does this reference? A function (name or entry address) scans its whole body; any other address or label lists only its own references. `--no-stack` hides `Stack[-0x...]` entries | `{xrefs: [{to_address, to_function, type}], count}` |
 
 Ghidra's reference manager is per-binary: a call whose caller and target live in two
 *different* loaded binaries is invisible to a single-binary `xrefs-to` lookup (most

@@ -785,6 +785,18 @@ class TestXrefs:
             assert "to_address" in xref
             assert "type" in xref
 
+    def test_xrefs_from_address_inside_function_lists_only_that_address(self, daemon):
+        """A function's entry address scans the whole body; an address inside
+        it lists just that instruction's references."""
+        b = daemon["short_name"]
+        whole = rpc(daemon["sock"], "xrefs_from", {
+            "binary": b, "target": daemon["main_addr"], "limit": 500})["result"]["xrefs"]
+        inner = sorted({x["from_address"] for x in whole} - {daemon["main_addr"]})
+        assert len(inner) > 1, whole
+        one = rpc(daemon["sock"], "xrefs_from", {
+            "binary": b, "target": inner[0], "limit": 500})["result"]["xrefs"]
+        assert one and {x["from_address"] for x in one} == {inner[0]}
+
     def test_xrefs_to_import_has_callers(self, daemon):
         """An imported function called by testapp must have at least one xref_to."""
         from ghidra_rpc.client import DaemonError, send_request
@@ -3357,6 +3369,18 @@ class TestTypeEdits:
         })["result"]
 
         assert {v["name"]: v["value"] for v in result["values"]} == {"B": 2, "C": 3}
+
+    def test_modify_enum_accepts_a_path_style_name(self, daemon, scratch):
+        """The `path` list-data-types prints (`/Name`) works, as for modify-struct."""
+        sock, binary = daemon["sock"], scratch["name"]
+        name = f"GrpcPathEnum_{uuid.uuid4().hex[:6]}"
+        created = rpc(sock, "create_enum", {"binary": binary, "name": name,
+                                            "values": [{"name": "A", "value": 1}]})["result"]
+        result = rpc(sock, "modify_enum", {
+            "binary": binary, "name": created["path"],
+            "add": [{"name": "B", "value": 2}],
+        })["result"]
+        assert {v["name"] for v in result["values"]} == {"A", "B"}
 
     def test_modify_enum_rejects_unknown_enum(self, daemon, scratch):
         rpc_error(daemon["sock"], "modify_enum", {

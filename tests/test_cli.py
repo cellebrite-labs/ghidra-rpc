@@ -326,19 +326,23 @@ class TestStartFailureIsJson:
     """A daemon that exits during startup (e.g. bad GHIDRA_INSTALL_DIR) makes
     start_background raise RuntimeError; start/restart report it as JSON."""
 
+    @pytest.mark.parametrize("exc", [
+        RuntimeError("Daemon process exited immediately with code 1."),
+        PermissionError("Daemon process exited immediately with code 1."),  # launch failed
+    ])
     @pytest.mark.parametrize("argv, error", [
         (["start", "--headless", "--detach"], "StartFailed"),
         (["restart", "--headless"], "RestartFailed"),
     ])
-    def test_early_exit_reported_as_json(self, monkeypatch, capsys, tmp_path, argv, error):
+    def test_early_exit_reported_as_json(self, monkeypatch, capsys, tmp_path, argv, error, exc):
         from ghidra_rpc import daemon
         monkeypatch.setenv("GHIDRA_RPC_STATE_DIR", str(tmp_path / "state"))
 
         def fake_start(session, timeout=None):
-            raise RuntimeError("Daemon process exited immediately with code 1.")
+            raise exc
 
         monkeypatch.setattr(daemon, "start_background", fake_start)
-        monkeypatch.setattr(daemon, "stop_daemon", lambda sock: False)
+        monkeypatch.setattr(daemon, "stop_daemon", lambda sock, **kw: False)
         code = _run_main(monkeypatch, argv + ["--project", str(tmp_path / "p.gpr")])
 
         assert code == 1

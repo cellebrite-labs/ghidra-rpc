@@ -214,3 +214,35 @@ class TestResolveAddress:
         pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
             _symbol("main", MagicMock())]
         assert _resolve(pi, "main") is main.getEntryPoint.return_value
+
+    def _thunk(self, name, entry, target):
+        f = _func(name)
+        f.getEntryPoint.return_value = entry
+        f.isThunk.return_value = True
+        f.getThunkedFunction.return_value = target
+        return f
+
+    def _real(self, name, entry):
+        f = _func(name)
+        f.getEntryPoint.return_value = entry
+        f.isThunk.return_value = False
+        return f
+
+    def test_same_named_overloads_are_ambiguous(self):
+        a = self._real("toString", _FakeAddress("00001000", "00001000"))
+        b = self._real("toString", _FakeAddress("00002000", "00002000"))
+        pi = _pi([a, b])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("toString", MagicMock())]
+        with pytest.raises(ValueError, match="Ambiguous function name 'toString'"):
+            _resolve(pi, "toString")
+
+    def test_one_imports_thunk_chain_is_not_ambiguous(self):
+        external = self._real("printf", _FakeAddress("EXTERNAL:00000001", "00000001"))
+        intermediate = self._thunk("printf", _FakeAddress("00105020", "00105020"), external)
+        plt = self._thunk("printf", _FakeAddress("00101050", "00101050"), external)
+        plt_addr = MagicMock()
+        pi = _pi([plt, intermediate])
+        pi.program.getSymbolTable.return_value.getAllSymbols.return_value = [
+            _symbol("printf", plt_addr)]
+        assert _resolve(pi, "printf") is plt_addr

@@ -177,18 +177,42 @@ def start_background(session: Session, timeout: float | None = None) -> None:
     )
 
 
-def stop_daemon(socket_path: Path) -> bool:
-    """Send a stop command to a running daemon. Returns True if stopped."""
+# Seconds `stop`/`restart` wait for a daemon to finish shutting down (saving
+# every program can take a while on large projects).
+STOP_TIMEOUT: float = 120.0
+
+
+def stop_daemon(socket_path: Path, *, wait: float = 0.0,
+                session_file: Path | None = None) -> bool:
+    """Ask a running daemon to stop. Returns False if none was running.
+
+    The daemon acknowledges *before* it shuts down. With ``wait`` > 0, block
+    until the shutdown is done: the endpoint is gone (until then the dying
+    daemon can still answer a ping, so a new start would mistake it for
+    itself) and, if *session_file* existed, it has been removed, which the
+    daemon does last, after saving and closing the project.  Raises
+    TimeoutError if that takes longer than ``wait`` seconds.
+    """
     from ghidra_rpc.client import send_request, DaemonNotRunning
 
+    watch_session = session_file is not None and session_file.exists()
     try:
         send_request(socket_path, "stop")
-        return True
     except DaemonNotRunning:
         return False
     except Exception:
-        # If the daemon closed the connection before responding, that's OK
-        return True
+        pass  # the daemon may close the connection before responding
+
+    deadline = time.time() + wait
+    while wait > 0 and (socket_path.exists()
+                        or (watch_session and session_file.exists())):
+        if time.time() >= deadline:
+            raise TimeoutError(
+                f"Daemon at {socket_path} acknowledged stop but did not shut "
+                f"down within {wait:.0f}s."
+            )
+        time.sleep(0.2)
+    return True
 
 
 def main():

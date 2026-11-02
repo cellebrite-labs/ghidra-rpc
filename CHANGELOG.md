@@ -30,6 +30,10 @@
 
 ### Changed
 
+- **Breaking:** `xrefs-from` with a `0x` address inside a function lists
+  only that address's references; a function name or entry address still
+  scans the whole function. It used to scan the containing function for any
+  address in it.
 - `version-track` and `match-function` take `--socket-timeout` (default
   1800 s) like the other bulk commands, instead of the 120 s client default.
 - Removed `version-track --ref-min-score`/`--ref-min-conf`; they were never
@@ -68,7 +72,19 @@
   of deleting it.
 - Name lookups for `set-comment`, `xrefs-to`/`xrefs-from` and `list-vtable`
   prefer an exact label over a function that merely contains the name
-  (`g_config` no longer resolves to `init_g_config`).
+  (`g_config` no longer resolves to `init_g_config`), and report an
+  ambiguous name when several distinct functions share it exactly (an
+  import's PLT and intermediate thunks still count as one).
+- `stop`, `stop --all` and `restart` wait until the daemon has actually shut
+  down (endpoint gone, project saved and released). `restart` used to take
+  the dying daemon's reply for the new one's and report success at once, so a
+  quick second restart or command could start another daemon on the same
+  project (`LockException: Unable to lock project!`). New errors:
+  `StopTimeout`/`RestartTimeout` if shutdown takes over 120 s.
+- `modify-enum` accepts a `/`-prefixed name (the `path` `list-data-types`
+  prints), like `modify-struct`.
+- `start --detach`/`restart` also report a daemon that cannot be launched at
+  all (an `OSError`) as JSON.
 - `start --detach` and `restart` report a daemon that exits during startup
   (e.g. a bad `GHIDRA_INSTALL_DIR`) as JSON (`StartFailed`/`RestartFailed`,
   with the log tail) instead of a Python traceback.
