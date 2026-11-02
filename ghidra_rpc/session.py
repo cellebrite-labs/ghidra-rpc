@@ -33,6 +33,30 @@ class Session:
         if self.ghidra_install_dir is not None:
             self.ghidra_install_dir = Path(self.ghidra_install_dir)
 
+    def to_dict(self) -> dict:
+        """JSON form shared by the session file and the global registry."""
+        return {
+            "mode": self.mode,
+            "project_gpr": str(self.project_gpr.resolve()),
+            "socket_path": str(self.socket_path),
+            "ghidra_install_dir": str(self.ghidra_install_dir) if self.ghidra_install_dir else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Session:
+        """Inverse of ``to_dict``. Raises KeyError/TypeError on a malformed entry."""
+        return cls(
+            mode=data["mode"],
+            project_gpr=data["project_gpr"],
+            socket_path=data["socket_path"],
+            ghidra_install_dir=data.get("ghidra_install_dir") or None,
+        )
+
+
+def _project_hash(gpr: Path) -> str:
+    """8-character hash of the resolved project path; keys every per-project file."""
+    return hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
+
 
 def socket_path_for_project(gpr: Path) -> Path:
     """Derive a deterministic socket path from a .gpr project path.
@@ -40,8 +64,7 @@ def socket_path_for_project(gpr: Path) -> Path:
     Uses an 8-character hash of the absolute path so each project gets
     its own socket without collisions.
     """
-    digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
-    return endpoint_directory() / f"ghidra-rpc-{digest}.sock"
+    return endpoint_directory() / f"ghidra-rpc-{_project_hash(gpr)}.sock"
 
 
 def session_file_path(gpr: Path) -> Path:
@@ -52,7 +75,7 @@ def session_file_path(gpr: Path) -> Path:
     2. ``<gpr-parent>/.ghidra-rpc-<hash>.json`` — alongside the project file
        (default; keeps ephemeral / sandboxed analyses self-contained).
     """
-    digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
+    digest = _project_hash(gpr)
     state_dir_env = os.environ.get("GHIDRA_RPC_STATE_DIR")
     if state_dir_env:
         return Path(state_dir_env) / f"{digest}.json"
@@ -64,13 +87,7 @@ def save(session: Session) -> None:
     """Persist session to disk."""
     path = session_file_path(session.project_gpr)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        "mode": session.mode,
-        "project_gpr": str(session.project_gpr.resolve()),
-        "socket_path": str(session.socket_path),
-        "ghidra_install_dir": str(session.ghidra_install_dir) if session.ghidra_install_dir else None,
-    }
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
 
 
 def load(gpr: Path) -> Session | None:
@@ -79,14 +96,7 @@ def load(gpr: Path) -> Session | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        ghidra_dir = data.get("ghidra_install_dir")
-        return Session(
-            mode=data["mode"],
-            project_gpr=Path(data["project_gpr"]),
-            socket_path=Path(data["socket_path"]),
-            ghidra_install_dir=Path(ghidra_dir) if ghidra_dir else None,
-        )
+        return Session.from_dict(json.loads(path.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, KeyError):
         return None
 
@@ -156,13 +166,8 @@ def register(session: Session) -> None:
     """Upsert a session into the global registry (lock-protected, non-fatal)."""
     path = _registry_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(str(session.project_gpr.resolve()).encode()).hexdigest()[:8]
-    entry = {
-        "project_gpr":       str(session.project_gpr.resolve()),
-        "socket_path":       str(session.socket_path),
-        "mode":              session.mode,
-        "ghidra_install_dir": str(session.ghidra_install_dir) if session.ghidra_install_dir else None,
-    }
+    digest = _project_hash(session.project_gpr)
+    entry = session.to_dict()
     try:
         with _registry_lock(path):
             with open(path, "a+", encoding="utf-8") as fh:
@@ -185,7 +190,7 @@ def unregister(gpr: Path) -> None:
     path = _registry_path()
     if not path.exists():
         return
-    digest = hashlib.sha256(str(gpr.resolve()).encode()).hexdigest()[:8]
+    digest = _project_hash(gpr)
     try:
         with _registry_lock(path):
             with open(path, "r+", encoding="utf-8") as fh:
@@ -218,13 +223,7 @@ def load_all() -> list["Session"]:
     sessions = []
     for entry in registry.values():
         try:
-            ghidra_dir = entry.get("ghidra_install_dir")
-            sessions.append(Session(
-                mode=entry["mode"],
-                project_gpr=Path(entry["project_gpr"]),
-                socket_path=Path(entry["socket_path"]),
-                ghidra_install_dir=Path(ghidra_dir) if ghidra_dir else None,
-            ))
+            sessions.append(Session.from_dict(entry))
         except (KeyError, TypeError):
             continue
     return sessions
