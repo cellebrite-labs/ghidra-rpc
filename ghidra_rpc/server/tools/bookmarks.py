@@ -9,6 +9,7 @@ from __future__ import annotations
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.modifications import (
+    _commit,
     _maybe_swing,
     ghidra_transaction,
 )
@@ -85,9 +86,7 @@ def _handle_set_bookmark(ctx, args: dict) -> dict:
             "action":   action,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set, invalidate=False)
 
 
 def _handle_list_bookmarks(ctx, args: dict) -> dict:
@@ -236,9 +235,7 @@ def _handle_remove_bookmark(ctx, args: dict) -> dict:
             "removed": True,
         }
 
-    result = _maybe_swing(ctx, do_remove)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_remove, invalidate=False)
 
 
 register_handler("set_bookmark", _handle_set_bookmark)

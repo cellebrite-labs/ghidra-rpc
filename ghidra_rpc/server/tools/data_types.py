@@ -12,6 +12,7 @@ from __future__ import annotations
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools.modifications import (
+    _commit,
     _maybe_swing,
     _resolve_data_type,
     ghidra_transaction,
@@ -250,9 +251,7 @@ def _handle_create_struct(ctx, args: dict) -> dict:
             "already_existed": False,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create)
 
 
 # ── clear-data-range ──────────────────────────────────────────────────────────
@@ -293,16 +292,13 @@ def _handle_clear_data_range(ctx, args: dict) -> dict:
             # clearCodeUnits(start, end, clearContext) — end is inclusive.
             listing.clearCodeUnits(start_addr, end_addr, False)
 
-        pi.decompiler_pool.invalidate_all()
         return {
             "start":   _fmt_address(start_addr),
             "end":     _fmt_address(end_addr),
             "cleared": True,
         }
 
-    result = _maybe_swing(ctx, do_clear)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_clear)
 
 
 # ── apply-data-type-range ─────────────────────────────────────────────────────
@@ -393,8 +389,6 @@ def _handle_apply_data_type_range(ctx, args: dict) -> dict:
                 except Exception:
                     break
 
-        pi.decompiler_pool.invalidate_all()
-
         result = {
             "start":         _fmt_address(start_addr),
             "end":           _fmt_address(end_addr),
@@ -407,9 +401,7 @@ def _handle_apply_data_type_range(ctx, args: dict) -> dict:
             result["errors"] = errors
         return result
 
-    result = _maybe_swing(ctx, do_apply)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_apply)
 
 
 # ── list-labels ───────────────────────────────────────────────────────────────
@@ -595,9 +587,7 @@ def _handle_create_enum(ctx, args: dict) -> dict:
             "already_existed": False,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create)
 
 
 # ── set-equate ────────────────────────────────────────────────────────────────
@@ -710,7 +700,6 @@ def _handle_set_equate(ctx, args: dict) -> dict:
         ):
             equate.addReference(addr, operand_index)
 
-        pi.decompiler_pool.invalidate_all()
         return {
             "address":        _fmt_address(addr),
             "operand_index":  operand_index,
@@ -720,9 +709,7 @@ def _handle_set_equate(ctx, args: dict) -> dict:
             "verified":       True,
         }
 
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_set)
 
 
 # ── list-equates ─────────────────────────────────────────────────────
@@ -937,9 +924,7 @@ def _handle_modify_enum(ctx, args: dict) -> dict:
             "values": _summarise(enum_dt),
         }
 
-    result = _maybe_swing(ctx, do_modify)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_modify)
 
 
 # ── create-union ─────────────────────────────────────────────────────────────
@@ -1050,9 +1035,7 @@ def _handle_create_union(ctx, args: dict) -> dict:
             "already_existed": False,
         }
 
-    result = _maybe_swing(ctx, do_create)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_create)
 
 
 # ── modify-struct ────────────────────────────────────────────────────────────
@@ -1210,9 +1193,7 @@ def _handle_modify_struct(ctx, args: dict) -> dict:
             },
         }
 
-    result = _maybe_swing(ctx, do_modify)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_modify)
 
 
 # ── register ──────────────────────────────────────────────────────────────────

@@ -195,10 +195,8 @@ def _handle_set_processor_context(ctx, args: dict) -> dict:
             "verified": actual == int_value,
         }
 
-    from ghidra_rpc.server.tools.modifications import _maybe_swing
-    result = _maybe_swing(ctx, do_set)
-    ctx.save_program(pi)
-    return result
+    from ghidra_rpc.server.tools.modifications import _commit
+    return _commit(ctx, pi, do_set)
 
 
 register_handler("get_processor_context", _handle_get_processor_context)

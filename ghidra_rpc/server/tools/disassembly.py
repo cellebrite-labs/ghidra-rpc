@@ -206,7 +206,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
     """
     from ghidra_rpc.server.context import _parse_address
     from ghidra_rpc.server.tools.modifications import (
-        _maybe_swing,
+        _commit,
         ghidra_transaction,
     )
 
@@ -283,8 +283,6 @@ def _handle_assemble(ctx, args: dict) -> dict:
             if len(instructions) >= len(instr_lines):
                 break
 
-        pi.decompiler_pool.invalidate_all()
-
         return {
             "address":       _fmt_address(addr),
             "bytes_written": total_bytes,
@@ -292,9 +290,7 @@ def _handle_assemble(ctx, args: dict) -> dict:
             "instructions":  instructions,
         }
 
-    result = _maybe_swing(ctx, do_assemble)
-    ctx.save_program(pi)
-    return result
+    return _commit(ctx, pi, do_assemble)
 
 
 register_handler("assemble", _handle_assemble)
