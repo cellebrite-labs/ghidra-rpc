@@ -6,7 +6,7 @@ import re
 
 from ghidra_rpc.server.context import _fmt_address
 from ghidra_rpc.server.main import register_handler
-from ghidra_rpc.server.tools._common import _find_function  # also re-exported
+from ghidra_rpc.server.tools._common import _decompile, _find_function  # _find_function is re-exported
 
 
 def _handle_decompile(ctx, args: dict) -> dict:
@@ -21,10 +21,7 @@ def _handle_decompile(ctx, args: dict) -> dict:
     pi = ctx.get_program(binary)
     func = _find_function(pi, func_name)
 
-    from ghidra.util.task import TaskMonitor
-
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+    result = _decompile(pi, func, timeout)
 
     error_msg = result.getErrorMessage()
     if error_msg and error_msg.strip():
@@ -91,9 +88,6 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
                                    searched (pass it back as address_min to
                                    resume), or None if coverage is complete
     """
-
-    from ghidra.util.task import TaskMonitor
-
     binary        = args.get("binary", "")
     pattern_str   = args.get("pattern", "")
     class_filter  = args.get("class_filter", "")
@@ -146,8 +140,7 @@ def _handle_search_decompiled(ctx, args: dict) -> dict:
         functions_searched += 1
 
         try:
-            with pi.decompiler_pool.acquire() as decompiler:
-                result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+            result = _decompile(pi, func, timeout)
             decompiled = result.getDecompiledFunction()
             if decompiled is None:
                 continue

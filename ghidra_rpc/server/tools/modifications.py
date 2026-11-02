@@ -12,6 +12,8 @@ from ghidra_rpc.server.main import register_handler
 from ghidra_rpc.server.tools._common import (
     _comment_types,
     _commit,
+    _decompile,
+    _decompile_high,
     _find_function,
     _maybe_swing,
     _resolve_data_type,
@@ -416,6 +418,21 @@ def _handle_set_data_type(ctx, args: dict) -> dict:
     return _commit(ctx, pi, do_set)
 
 
+def _find_local_symbol(high_func, func, variable_name: str):
+    """Return the first ``HighSymbol`` named *variable_name* in *high_func*'s
+    local symbol map, or raise ValueError listing the available names."""
+    all_names = []
+    for sym in high_func.getLocalSymbolMap().getSymbols():
+        sym_name = str(sym.getName())
+        all_names.append(sym_name)
+        if sym_name == variable_name:
+            return sym
+    raise ValueError(
+        f"Variable '{variable_name}' not found in '{func.getName()}'. "
+        f"Available: {sorted(all_names)}"
+    )
+
+
 def _handle_retype_variable(ctx, args: dict) -> dict:
     """Retype a local variable or parameter in the decompiler's high-level view.
 
@@ -440,34 +457,9 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     new_type = _resolve_data_type(pi.program, type_str)
 
     # ---- Step 1: decompile to get HighFunction (blocking; not on Swing EDT) --
-    from ghidra.util.task import TaskMonitor
+    high_func = _decompile_high(pi, func, timeout)
 
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
-
-    # Find the symbol by name in the local symbol map
-    found_sym = None
-    all_names = []
-    for sym in high_func.getLocalSymbolMap().getSymbols():
-        sym_name = str(sym.getName())
-        all_names.append(sym_name)
-        if sym_name == variable_name:
-            found_sym = sym
-            break
-
-    if found_sym is None:
-        raise ValueError(
-            f"Variable '{variable_name}' not found in '{func.getName()}'. "
-            f"Available: {sorted(all_names)}"
-        )
+    found_sym = _find_local_symbol(high_func, func, variable_name)
 
     old_type = str(found_sym.getDataType())
 
@@ -489,9 +481,7 @@ def _handle_retype_variable(ctx, args: dict) -> dict:
     verified = False
     actual_type = str(new_type.getName())
     try:
-        with pi.decompiler_pool.acquire() as decompiler:
-            from ghidra.util.task import TaskMonitor as _TM
-            result2 = decompiler.decompileFunction(func, 30, _TM.DUMMY)
+        result2 = _decompile(pi, func, 30)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -535,34 +525,9 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
     func     = _find_function(pi, func_name)
 
     # ---- Step 1: decompile to get HighFunction (blocking; not on Swing EDT) --
-    from ghidra.util.task import TaskMonitor
+    high_func = _decompile_high(pi, func, timeout)
 
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
-
-    # Find the symbol by name in the local symbol map
-    found_sym = None
-    all_names = []
-    for sym in high_func.getLocalSymbolMap().getSymbols():
-        sym_name = str(sym.getName())
-        all_names.append(sym_name)
-        if sym_name == variable_name:
-            found_sym = sym
-            break
-
-    if found_sym is None:
-        raise ValueError(
-            f"Variable '{variable_name}' not found in '{func.getName()}'. "
-            f"Available: {sorted(all_names)}"
-        )
+    found_sym = _find_local_symbol(high_func, func, variable_name)
 
     # ---- Step 2: commit the name change (on Swing EDT in GUI mode) -----------
     def do_update():
@@ -581,9 +546,7 @@ def _handle_rename_variable(ctx, args: dict) -> dict:
     # Read back via a fresh decompilation to verify the change took effect.
     verified = False
     try:
-        with pi.decompiler_pool.acquire() as decompiler:
-            from ghidra.util.task import TaskMonitor as _TM
-            result2 = decompiler.decompileFunction(func, 30, _TM.DUMMY)
+        result2 = _decompile(pi, func, 30)
         hf2 = result2.getHighFunction()
         if hf2:
             for sym2 in hf2.getLocalSymbolMap().getSymbols():
@@ -650,18 +613,7 @@ def _handle_batch_edit_variables(ctx, args: dict) -> dict:
     func = _find_function(pi, func_name)
 
     # ---- Step 1: decompile ONCE (blocking; not on Swing EDT) -----------------
-    from ghidra.util.task import TaskMonitor
-
-    with pi.decompiler_pool.acquire() as decompiler:
-        result = decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
-
-    err = result.getErrorMessage()
-    if err and str(err).strip():
-        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
-
-    high_func = result.getHighFunction()
-    if high_func is None:
-        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
+    high_func = _decompile_high(pi, func, timeout)
 
     # Index the single snapshot by both name and storage.
     by_name: dict = {}
@@ -774,9 +726,7 @@ def _handle_batch_edit_variables(ctx, args: dict) -> dict:
     verify_map: dict = {}
     if resolved:
         try:
-            with pi.decompiler_pool.acquire() as decompiler:
-                from ghidra.util.task import TaskMonitor as _TM
-                result2 = decompiler.decompileFunction(func, timeout, _TM.DUMMY)
+            result2 = _decompile(pi, func, timeout)
             hf2 = result2.getHighFunction()
             if hf2:
                 for sym2 in hf2.getLocalSymbolMap().getSymbols():

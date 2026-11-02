@@ -64,6 +64,35 @@ def _commit(ctx, pi, fn, invalidate: bool = True):
     return result
 
 
+# ── Decompiling ──────────────────────────────────────────────────────────────
+
+def _decompile(pi, func, timeout: int):
+    """Decompile *func* with a pooled decompiler; returns ``DecompileResults``.
+
+    Callers check ``getErrorMessage()`` themselves, since they differ in
+    whether a failure raises, is recorded per function, or is ignored.
+    """
+    from ghidra.util.task import TaskMonitor
+
+    with pi.decompiler_pool.acquire() as decompiler:
+        return decompiler.decompileFunction(func, timeout, TaskMonitor.DUMMY)
+
+
+def _decompile_high(pi, func, timeout: int):
+    """Decompile *func* and return its ``HighFunction``; raises RuntimeError
+    if decompilation fails or yields no high function."""
+    result = _decompile(pi, func, timeout)
+
+    err = result.getErrorMessage()
+    if err and str(err).strip():
+        raise RuntimeError(f"Decompilation failed for '{func.getName()}': {err}")
+
+    high_func = result.getHighFunction()
+    if high_func is None:
+        raise RuntimeError(f"Could not obtain high function for '{func.getName()}'")
+    return high_func
+
+
 # ── Resolving user input ─────────────────────────────────────────────────────
 
 def _find_function(pi, name_or_address: str):
