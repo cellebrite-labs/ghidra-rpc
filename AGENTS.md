@@ -34,7 +34,8 @@ ghidra-rpc/
 │   ├── cli.py            — Click CLI (ghidra-rpc entry point, all user commands).
 │   │                       Daemon commands register via @_daemon_command(), which
 │   │                       adds BINARY + -p and sends the dict the function returns;
-│   │                       helpers _optional_args, _read_json_ops, _parse_pairs
+│   │                       helpers _optional_args, _read_json_ops, _parse_int,
+│   │                       _parse_pairs
 │   ├── client.py         — Local transport client (send_request, auto-restart logic)
 │   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background, stop)
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
@@ -138,7 +139,8 @@ ghidra-rpc/
     ├── test_client.py           — Client + session tests (no Ghidra needed)
     ├── test_session_registry.py — Registry, discover-instances, list-instances CLI
     ├── test_cli.py              — General CLI-parsing tests (no Ghidra needed): the
-    │                              JSON-usage-error contract in main(), set-comment's
+    │                              JSON-usage-error contract in main() (incl. errors
+    │                              raised from command bodies), set-comment's
     │                              --comment option, list-bookmarks --category
     ├── test_search_decompiled.py — search_decompiled handler logic (regex matching,
     │                              class_filter, limit/max_functions truncation,
@@ -195,6 +197,9 @@ User Terminal                      Background Process (same machine)
   ...}` on stdout with the same exit code Click would have used, instead of a plain-text
   usage string. `--help`/`--version` are unaffected (Click handles those via `Exit`,
   which is caught internally in non-standalone mode and returned as an exit code).
+  Argument checks inside a command body must likewise raise `click.UsageError` /
+  `click.BadParameter` (e.g. `_read_json_ops`, `_parse_int`, `_parse_pairs`), never
+  `click.echo(..., err=True)` + `sys.exit`, and must not let a `ValueError` escape.
 
 ## Key Design Patterns
 

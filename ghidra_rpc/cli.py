@@ -54,11 +54,7 @@ def _resolve_project(project: str | None) -> Path:
     env = os.environ.get("GHIDRA_RPC_PROJECT")
     if env:
         return Path(env).resolve()
-    click.echo(
-        "Error: No project specified. Use --project or set GHIDRA_RPC_PROJECT.",
-        err=True,
-    )
-    sys.exit(1)
+    raise click.UsageError("No project specified. Use --project or set GHIDRA_RPC_PROJECT.")
 
 
 def _json_output(data: dict) -> None:
@@ -471,30 +467,42 @@ def _optional_args(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if v is not None and v != ""}
 
 
+# Argument errors found after Click's own parsing raise click.UsageError /
+# BadParameter too, so main() reports them in the JSON error envelope.
+
 def _read_json_ops(json_data: str, json_file: str | None):
     """Load batch operations from --json-file (preferred) or inline --json."""
     if json_file:
-        with open(json_file) as f:
-            return json.load(f)
+        try:
+            with open(json_file, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise click.BadParameter(f"cannot read JSON from {json_file}: {e}",
+                                     param_hint="'--json-file'")
     if json_data:
         try:
             return json.loads(json_data)
         except json.JSONDecodeError as e:
-            click.echo(f"Error: invalid JSON: {e}", err=True)
-            sys.exit(1)
-    click.echo("Error: provide --json or --json-file.", err=True)
-    sys.exit(1)
+            raise click.BadParameter(f"invalid JSON: {e}", param_hint="'--json'")
+    raise click.UsageError("provide --json or --json-file.")
+
+
+def _parse_int(value: str, param_hint: str) -> int:
+    """Parse a decimal or 0x-hex integer Click didn't type-check itself."""
+    try:
+        return HEX_INT.convert(value, None, None)
+    except click.BadParameter as e:
+        e.param_hint = param_hint
+        raise
 
 
 def _parse_pairs(tokens: tuple, label: str, keys: tuple[str, str]) -> list[dict]:
     """Split flat ``A1 B1 A2 B2 ...`` tokens into ``[{keys[0]: A1, keys[1]: B1}, ...]``."""
     if len(tokens) % 2 != 0:
-        click.echo(
-            f"Error: {label} must be pairs of {keys[0].upper()} {keys[1].upper()} "
-            f"(got {len(tokens)} token(s)).",
-            err=True,
+        raise click.UsageError(
+            f"{label} must be pairs of {keys[0].upper()} {keys[1].upper()} "
+            f"(got {len(tokens)} token(s))."
         )
-        sys.exit(1)
     return [dict(zip(keys, tokens[i:i + 2])) for i in range(0, len(tokens), 2)]
 
 
@@ -984,12 +992,10 @@ def create_struct(
     struct and recreate it with the new field layout.
     """
     if fields and explicit_fields:
-        click.echo(
-            "Error: use either positional TYPE NAME pairs or --field "
-            "OFFSET TYPE NAME, not both.",
-            err=True,
+        raise click.UsageError(
+            "use either positional TYPE NAME pairs or --field "
+            "OFFSET TYPE NAME, not both."
         )
-        sys.exit(1)
 
     if explicit_fields:
         field_list = [
@@ -1001,12 +1007,10 @@ def create_struct(
     elif if_not_exists:
         field_list = []  # allowed: idempotent lookup of an existing struct
     else:
-        click.echo(
-            "Error: provide fields as positional TYPE NAME pairs or "
-            "--field OFFSET TYPE NAME.",
-            err=True,
+        raise click.UsageError(
+            "provide fields as positional TYPE NAME pairs or "
+            "--field OFFSET TYPE NAME."
         )
-        sys.exit(1)
 
     return {
         "name": struct_name, "fields": field_list,
@@ -1078,17 +1082,13 @@ def modify_struct(
         --new-type "Node *" --new-name next
     """
     if field_offset is None and not field_name:
-        click.echo(
-            "Error: At least one of --field-offset or --field-name is required.",
-            err=True,
+        raise click.UsageError(
+            "At least one of --field-offset or --field-name is required."
         )
-        sys.exit(1)
     if not new_type and not new_name and not new_comment:
-        click.echo(
-            "Error: At least one of --new-type, --new-name, or --new-comment is required.",
-            err=True,
+        raise click.UsageError(
+            "At least one of --new-type, --new-name, or --new-comment is required."
         )
-        sys.exit(1)
 
     return {"struct_name": struct_name, **_optional_args(
         field_offset=field_offset, field_name=field_name,
@@ -1130,7 +1130,7 @@ def create_enum(
     """
     value_list = _parse_pairs(values, "VALUES", ("name", "value"))
     for entry in value_list:
-        entry["value"] = int(entry["value"], 0)
+        entry["value"] = _parse_int(entry["value"], "'VALUES'")
     return {
         "name": enum_name, "values": value_list,
         "size": int(size), "if_not_exists": if_not_exists, "or_replace": or_replace,
@@ -1140,7 +1140,7 @@ def create_enum(
 @_daemon_command("set-equate")
 @click.argument("address")
 @click.argument("equate_name")
-@click.argument("value")
+@click.argument("value", type=HEX_INT)
 @click.option(
     "--operand-index", "operand_index", type=int, default=1, show_default=True,
     help="Zero-based index of the scalar operand in the instruction.",
@@ -1152,7 +1152,7 @@ def create_enum(
          "the enum so Ghidra shows its name in the listing view.",
 )
 def set_equate(
-    address: str, equate_name: str, value: str, operand_index: int, enum_path: str,
+    address: str, equate_name: str, value: int, operand_index: int, enum_path: str,
 ):
     """Apply a named equate to a scalar operand at ADDRESS.
 
@@ -1168,7 +1168,7 @@ def set_equate(
       ghidra-rpc set-equate binary 0x004010b4 _FPE_INVALID 0x81 --enum-path ExceptionNumbers
     """
     return {
-        "address": address, "equate_name": equate_name, "value": int(value, 0),
+        "address": address, "equate_name": equate_name, "value": value,
         "operand_index": operand_index, "enum_path": enum_path,
     }
 
@@ -1294,7 +1294,7 @@ def modify_enum(enum_name: str, add_entries: tuple, remove_entries: tuple):
                 f"--add entries must be NAME:VALUE, got: {entry!r}"
             )
         name, _, raw_val = entry.partition(":")
-        add.append({"name": name, "value": int(raw_val, 0)})
+        add.append({"name": name, "value": _parse_int(raw_val, "'--add'")})
 
     return {"name": enum_name, "add": add, "remove": list(remove_entries)}
 
