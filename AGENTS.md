@@ -31,7 +31,10 @@ ghidra-rpc/
 │
 ├── ghidra_rpc/           — Python package
 │   ├── __init__.py       — Version
-│   ├── cli.py            — Click CLI (ghidra-rpc entry point, all user commands)
+│   ├── cli.py            — Click CLI (ghidra-rpc entry point, all user commands).
+│   │                       Daemon commands register via @_daemon_command(), which
+│   │                       adds BINARY + -p and sends the dict the function returns;
+│   │                       helpers _optional_args, _read_json_ops, _parse_pairs
 │   ├── client.py         — Local transport client (send_request, auto-restart logic)
 │   ├── daemon.py         — Daemon lifecycle (start_blocking, start_background, stop)
 │   │                       start_background() explicitly forwards GHIDRA_INSTALL_DIR
@@ -44,6 +47,7 @@ ghidra-rpc/
 │   │                       • Session file: <gpr-dir>/.ghidra-rpc-<hash>.json (default)
 │   │                         or $GHIDRA_RPC_STATE_DIR/<hash>.json
 │   │                       • Fields: mode, project_gpr, socket_path, ghidra_install_dir
+│   │                         (Session.to_dict/from_dict; <hash> is _project_hash())
 │   ├── transport.py      — Cross-platform local transport: AF_UNIX socket on POSIX,
 │   │                       token-authenticated 127.0.0.1 TCP on Windows (where
 │   │                       CPython exposes no AF_UNIX).  listen()/connect() return
@@ -63,12 +67,18 @@ ghidra-rpc/
 │       │                   address_min/max filter for functions + search_decompiled)
 │       └── tools/        — Command handlers (one module per domain)
 │           ├── __init__.py     — register_all_tools()
+│           ├── _common.py      — shared helpers, no handlers: ghidra_transaction,
+│           │                     _maybe_swing, _commit (swing + invalidate + save),
+│           │                     _decompile / _decompile_high, _find_function,
+│           │                     _resolve_address, _resolve_data_type,
+│           │                     _resolve_namespace, _comment_types (re-exported
+│           │                     from modifications/decompiler/xrefs)
 │           ├── analysis.py     — load (analyze=, analysis_timeout=), list_binaries,
 │           │                     list_project_programs, save, functions (with
 │           │                     address_min/max range filter and with_body),
 │           │                     imports, exports, metadata, relocations,
 │           │                     list_calling_conventions
-│           ├── decompiler.py   — decompile, _find_function (name/address resolution),
+│           ├── decompiler.py   — decompile,
 │           │                     search_decompiled (regex-search decompiled C across
 │           │                     many functions in one call; optional class_filter,
 │           │                     address_min/max; reports scanned_range +
@@ -120,8 +130,6 @@ ghidra-rpc/
 │                                    against one decompiler snapshot),
 │                                  set_calling_convention, set_thunk, set_flow_override,
 │                                  create_namespace, list_namespaces
-│                                  _resolve_data_type() — type-name → Ghidra DataType
-│                                  _resolve_namespace() — namespace path resolution
 │                                  _sanitize_signature() — strips trailing `;` and
 │                                    extracts inline calling conventions (__thiscall, etc.)
 │
@@ -202,38 +210,53 @@ User Terminal                      Background Process (same machine)
      round-trips through `_parse_address`), never `str(addr)`
 3. Register: `register_handler("foo", _handle_foo)` at module level.
 4. Import the module in `tools/__init__.py` → `register_all_tools()` auto-registers it.
-5. Add a CLI subcommand in `cli.py` that calls `_rpc_command(gpr, "foo", {...})`.
+5. Add a CLI subcommand in `cli.py` with `@_daemon_command`. It adds the leading
+   `BINARY` argument (`binary=False` to opt out) and the trailing `--project/-p`,
+   resolves the project and sends whatever dict the function returns:
+   ```python
+   @_daemon_command("foo")              # RPC name defaults to "foo"; pass it if it differs
+   @click.argument("address")
+   @click.option("--name", default="")
+   def foo(address: str, name: str):
+       """Help text."""
+       return {"address": address, **_optional_args(name=name)}
+   ```
+   `_optional_args()` drops only `None` and `""` (unset options), so `0`/`False`
+   values are still sent.
+   Long sweeps (`decompile-all`, `search-decompiled`) pass `socket_timeout=True`,
+   which adds `--socket-timeout` and hands it to `_rpc_command` instead of the args.
 
 ### Write Operations (Transactions + Save)
 
-All Ghidra mutations need a transaction:
+All Ghidra mutations need a transaction, and every write handler ends with
+`_commit()`, which runs the write on the Swing EDT in GUI mode (`_maybe_swing`),
+flushes the decompiler cache, and saves:
 ```python
-from ghidra_rpc.server.tools.modifications import ghidra_transaction
+from ghidra_rpc.server.tools._common import _commit, ghidra_transaction
 
-with ghidra_transaction(pi.program, "description"):
-    # Ghidra API calls that modify program state
+def do_write():
+    with ghidra_transaction(pi.program, "description"):
+        # Ghidra API calls that modify program state
+    return {...}  # read back + build the result inside do_write
+
+return _commit(ctx, pi, do_write)
 ```
-
-After every write, call:
-```python
-ctx.save_program(pi)
-```
-`save_program` works in both modes: headless calls `project.save(program)`; GUI calls
-`domainFile.save()` on the Swing EDT.
-
-In GUI mode, wrap the full operation (transaction included) in `ctx.run_on_swing(fn)`.
-The `_maybe_swing()` helper in `modifications.py` shows the pattern.
+Pass `invalidate=False` only for writes the decompiler never reads (bookmarks, tags,
+namespaces). `_commit` is a helper, not a decorator: work that must stay off the EDT
+(e.g. decompiling with `_decompile_high()` before a variable edit) runs before it.
+`ctx.save_program` works in both modes: headless calls `project.save(program)`; GUI
+calls `domainFile.save()` on the Swing EDT.
 
 ### Data-Type Resolution
 
-Use `_resolve_data_type(program, type_str)` in `modifications.py` — it handles built-ins,
+Use `_resolve_data_type(program, type_str)` in `tools/_common.py` — it handles built-ins,
 pointer decoration (`char *`), array decoration (`char[11]`), and DTM lookup by name/path.
 Works in both headless and GUI mode. **Do not use** `ghidra.util.data.DataTypeParser` —
 it requires a `DataTypeQueryService` that is only available in GUI mode.
 
 ### Function/Address Resolution
 
-`_find_function(pi, target)` in `decompiler.py`:
+`_find_function(pi, target)` in `tools/_common.py`:
 - Hex addresses: `0x401000` → `getFunctionAt` / `getFunctionContaining`
 - Exact name match (case-insensitive)
 - Partial name match (if unambiguous)
@@ -288,7 +311,7 @@ uv run ghidra-rpc decompile ls main
 1. **Saving freshly imported programs**: Use `saveAs()` → `close()` → `openProgram()`,
    not `save()` directly — Ghidra raises `ReadOnlyException` on a freshly imported program.
 
-2. **`DataTypeParser` is GUI-only**: Use `_resolve_data_type()` in `modifications.py`
+2. **`DataTypeParser` is GUI-only**: Use `_resolve_data_type()` in `tools/_common.py`
    instead of `ghidra.util.data.DataTypeParser` (needs `DataTypeQueryService`).
 
 3. **JVM memory**: Set `_JAVA_OPTIONS="-Xmx8g"` for large binaries to avoid OOM.
