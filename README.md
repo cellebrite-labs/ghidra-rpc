@@ -1,5 +1,7 @@
 # ghidra-rpc
 
+[![Featured on Made with REA](https://madewithrea.com/badges/featured.svg)](https://madewithrea.com/builds/ghidra-rpc-ghidra-agentic-skill-for-llm-driven-reverse-engineering)
+
 An agentic skill that gives an LLM access to [Ghidra](https://ghidra-sre.org/) so
 it can perform reverse engineering tasks autonomously: decompile functions, trace
 call graphs, rename and annotate symbols, define data structures, diff binary
